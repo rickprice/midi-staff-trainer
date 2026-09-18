@@ -3,7 +3,7 @@ use crate::{
     midi::MidiReceiver,
     staff::{Note, random_natural_note},
 };
-use egui::{Color32, Painter, Pos2, Rect, Stroke};
+use egui::{Align2, Color32, FontId, Painter, Pos2, Rect, Stroke};
 use std::time::{Duration, Instant};
 
 const CORRECT_DISPLAY_MS: u64 = 900;
@@ -135,6 +135,20 @@ impl TrainerApp {
         painter.line_segment(
             [Pos2::new(stem_x, stem_y0), Pos2::new(stem_x, stem_y1)],
             Stroke::new(1.5_f32, note_color),
+        );
+
+        // Note name label: at least 3 line-spacings below the bottom staff line,
+        // or below the note head itself — whichever is lower.
+        let label_y = f32::max(
+            bottom_line_y + line_spacing * 3.0,
+            note_y + note_r + line_spacing,
+        );
+        painter.text(
+            Pos2::new(note_x, label_y),
+            Align2::CENTER_CENTER,
+            self.current_note.to_string(),
+            FontId::proportional(line_spacing * 1.1),
+            note_color,
         );
     }
 }
