@@ -3,13 +3,12 @@ use std::sync::mpsc::{self, Receiver, Sender};
 
 pub struct MidiReceiver {
     pub rx: Receiver<u8>,
-    // Keep connection alive.
-    _conn: midir::MidiInputConnection<()>,
+    _conn: midir::MidiInputConnection<()>, // keeps the connection alive
 }
 
 impl MidiReceiver {
-    /// Connect to the first available MIDI port whose name contains `port_hint`,
-    /// or the first port if `port_hint` is None.
+    /// Connect to the first port whose name contains `port_hint`,
+    /// or the very first available port when `port_hint` is `None`.
     pub fn connect(port_hint: Option<&str>) -> Result<Self, String> {
         let mut input = MidiInput::new("midi-staff-trainer").map_err(|e| e.to_string())?;
         input.ignore(Ignore::None);
@@ -22,13 +21,8 @@ impl MidiReceiver {
         let port = if let Some(hint) = port_hint {
             ports
                 .iter()
-                .find(|p| {
-                    input
-                        .port_name(p)
-                        .map(|n| n.contains(hint))
-                        .unwrap_or(false)
-                })
-                .ok_or_else(|| format!("No port matching '{hint}'"))?
+                .find(|p| input.port_name(p).is_ok_and(|n| n.contains(hint)))
+                .ok_or_else(|| format!("No MIDI port matching '{hint}'"))?
         } else {
             &ports[0]
         };
@@ -41,7 +35,7 @@ impl MidiReceiver {
                 port,
                 "midi-staff-trainer-in",
                 move |_stamp, msg, _| {
-                    // Note-on with velocity > 0
+                    // Note-on (status 0x9n) with velocity > 0.
                     if msg.len() >= 3 && (msg[0] & 0xF0) == 0x90 && msg[2] > 0 {
                         let _ = tx.send(msg[1]);
                     }
@@ -54,13 +48,13 @@ impl MidiReceiver {
         Ok(Self { rx, _conn: conn })
     }
 
-    /// List available MIDI input port names.
+    /// List the names of all currently available MIDI input ports.
+    #[must_use]
     pub fn list_ports() -> Vec<String> {
-        let mut input = match MidiInput::new("midi-staff-trainer-list") {
+        let input = match MidiInput::new("midi-staff-trainer-list") {
             Ok(i) => i,
             Err(_) => return vec![],
         };
-        input.ignore(Ignore::None);
         input
             .ports()
             .iter()

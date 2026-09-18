@@ -3,7 +3,7 @@ use crate::{
     midi::MidiReceiver,
     staff::{Note, random_natural_note},
 };
-use egui::{Color32, Painter, Pos2, Rect, Stroke, Vec2};
+use egui::{Color32, Painter, Pos2, Rect, Stroke};
 use std::time::{Duration, Instant};
 
 const CORRECT_DISPLAY_MS: u64 = 900;
@@ -26,8 +26,8 @@ struct Score {
 
 enum Feedback {
     Waiting,
-    Correct(String),
-    Wrong { expected: String, got: String },
+    Correct(Note),
+    Wrong { expected: Note, got: Note },
 }
 
 impl TrainerApp {
@@ -57,17 +57,17 @@ impl TrainerApp {
 
     fn handle_midi_note(&mut self, played: u8) {
         if matches!(self.feedback, Feedback::Correct(_)) {
-            return;
+            return; // ignore input while success is displayed
         }
         self.score.attempts += 1;
         if played == self.current_note.midi {
             self.score.correct += 1;
-            self.feedback = Feedback::Correct(self.current_note.name());
+            self.feedback = Feedback::Correct(self.current_note);
             self.correct_at = Some(Instant::now());
         } else {
             self.feedback = Feedback::Wrong {
-                expected: self.current_note.name(),
-                got: Note::new(played).name(),
+                expected: self.current_note,
+                got: Note::new(played),
             };
         }
     }
@@ -75,22 +75,20 @@ impl TrainerApp {
     fn draw_staff(&self, painter: &Painter, rect: Rect) {
         let cx = rect.center().x;
         let cy = rect.center().y;
-        // Scale so the 5 staff lines occupy about 30% of the available height.
+        // Scale so the 5 staff lines fill ~30 % of the available height.
         let line_spacing = (rect.height() * 0.075).clamp(12.0, 28.0);
         let staff_width = rect.width() * 0.85;
         let x0 = cx - staff_width / 2.0;
         let x1 = cx + staff_width / 2.0;
 
         let staff_color = Color32::from_gray(220);
-        for i in 0..5i32 {
+        let staff_stroke = Stroke::new(1.5_f32, staff_color);
+        for i in 0..5_i32 {
             let y = cy + (2 - i) as f32 * line_spacing;
-            painter.line_segment(
-                [Pos2::new(x0, y), Pos2::new(x1, y)],
-                Stroke::new(1.5_f32, staff_color),
-            );
+            painter.line_segment([Pos2::new(x0, y), Pos2::new(x1, y)], staff_stroke);
         }
 
-        // staff_position() 0=C4; E4 is the treble bottom line at staff_position 2.
+        // staff_position() maps C4 → 0; E4 (treble bottom line) → 2.
         let pos = self.current_note.staff_position();
         let bottom_line_y = cy + 2.0 * line_spacing;
         let top_line_y = cy - 2.0 * line_spacing;
@@ -98,13 +96,14 @@ impl TrainerApp {
         let note_x = cx;
         let note_r = line_spacing * 0.45;
         let ledger_hw = note_r * 2.2;
+        let ledger_stroke = Stroke::new(1.5_f32, staff_color);
 
         // Ledger lines below staff.
         let mut ly = bottom_line_y + line_spacing;
         while ly <= note_y + 0.5 {
             painter.line_segment(
                 [Pos2::new(note_x - ledger_hw, ly), Pos2::new(note_x + ledger_hw, ly)],
-                Stroke::new(1.5_f32, staff_color),
+                ledger_stroke,
             );
             ly += line_spacing;
         }
@@ -113,22 +112,21 @@ impl TrainerApp {
         while ly >= note_y - 0.5 {
             painter.line_segment(
                 [Pos2::new(note_x - ledger_hw, ly), Pos2::new(note_x + ledger_hw, ly)],
-                Stroke::new(1.5_f32, staff_color),
+                ledger_stroke,
             );
             ly -= line_spacing;
         }
 
-        let note_color = match &self.feedback {
+        let note_color = match self.feedback {
             Feedback::Correct(_) => Color32::from_rgb(50, 180, 80),
             Feedback::Wrong { .. } => Color32::from_rgb(210, 60, 60),
             Feedback::Waiting => Color32::from_gray(230),
         };
 
-        // egui 0.31 Painter has no ellipse_filled; use circle_filled.
         painter.circle_filled(Pos2::new(note_x, note_y), note_r, note_color);
 
-        // Stem up unless note is high on staff (B4 = position 5).
-        let stem_up = pos < 5;
+        // Stem up when note is at or below B4 (position 6 = midline of treble staff).
+        let stem_up = pos <= 6;
         let (stem_x, stem_y0, stem_y1) = if stem_up {
             (note_x + note_r, note_y, note_y - line_spacing * 3.5)
         } else {
@@ -143,7 +141,7 @@ impl TrainerApp {
 
 impl eframe::App for TrainerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Collect MIDI notes before mutably borrowing self for handling.
+        // Drain the MIDI channel into a local buffer before borrowing self mutably.
         let midi_notes: Vec<u8> = self
             .midi
             .as_ref()
@@ -155,7 +153,7 @@ impl eframe::App for TrainerApp {
             }
         }
 
-        // Auto-advance after CORRECT_DISPLAY_MS.
+        // Schedule repaint for the auto-advance moment; advance when time arrives.
         if let Some(t) = self.correct_at {
             let elapsed = t.elapsed();
             let delay = Duration::from_millis(CORRECT_DISPLAY_MS);
@@ -175,8 +173,8 @@ impl eframe::App for TrainerApp {
                     "Score: {}/{} | Range: {} – {}",
                     self.score.correct,
                     self.score.attempts,
-                    Note::new(self.config.midi_low).name(),
-                    Note::new(self.config.midi_high).name(),
+                    Note::new(self.config.midi_low),
+                    Note::new(self.config.midi_high),
                 ));
                 ui.add_space(8.0);
 
@@ -199,25 +197,27 @@ impl eframe::App for TrainerApp {
         egui::TopBottomPanel::bottom("feedback").show(ctx, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(12.0);
-                match &self.feedback {
+                match self.feedback {
                     Feedback::Waiting => {
                         ui.label("Play the note shown on the staff.");
                         if ui.button("Skip").clicked() {
                             self.next_note();
                         }
                     }
-                    Feedback::Correct(name) => {
+                    Feedback::Correct(note) => {
                         ui.colored_label(
                             Color32::from_rgb(50, 180, 80),
-                            format!("Correct! ({name}) — next note coming…"),
+                            format!("Correct! ({note}) — next note coming…"),
                         );
                         if ui.button("Next now").clicked() {
                             self.next_note();
                         }
                     }
                     Feedback::Wrong { expected, got } => {
-                        let msg = format!("Wrong — expected {expected}, got {got}. Try again.");
-                        ui.colored_label(Color32::from_rgb(210, 60, 60), msg);
+                        ui.colored_label(
+                            Color32::from_rgb(210, 60, 60),
+                            format!("Wrong — expected {expected}, got {got}. Try again."),
+                        );
                         if ui.button("Skip").clicked() {
                             self.next_note();
                         }

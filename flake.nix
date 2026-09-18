@@ -33,7 +33,7 @@
       devShells = forAllSystems (system:
         let pkgs = pkgsFor system; in {
           default = pkgs.mkShell {
-            nativeBuildInputs = with pkgs; [ rustc cargo pkg-config ];
+            nativeBuildInputs = with pkgs; [ rustc cargo clippy rustfmt pkg-config ];
             buildInputs = with pkgs; [
               alsa-lib
               libxkbcommon
