@@ -1,0 +1,15 @@
+[package]
+name = "midi-staff-trainer"
+version = "0.1.0"
+edition = "2024"
+description = "Interactive MIDI keyboard to musical staff trainer"
+
+[dependencies]
+eframe = "0.31"
+egui = "0.31"
+midir = "0.10"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+[profile.release]
+opt-level = 3
