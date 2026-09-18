@@ -88,6 +88,8 @@ impl TrainerApp {
             painter.line_segment([Pos2::new(x0, y), Pos2::new(x1, y)], staff_stroke);
         }
 
+        draw_treble_clef(painter, x0, cy, line_spacing, staff_color);
+
         // staff_position() maps C4 → 0; E4 (treble bottom line) → 2.
         let pos = self.current_note.staff_position();
         let bottom_line_y = cy + 2.0 * line_spacing;
@@ -151,6 +153,71 @@ impl TrainerApp {
             note_color,
         );
     }
+}
+
+/// Draws a treble clef symbol at the left edge of the staff.
+///
+/// `x0` — left edge of the staff lines; `cy` — vertical centre of the staff
+/// (the B4 / middle line); `s` — line spacing in pixels.
+fn draw_treble_clef(painter: &Painter, x0: f32, cy: f32, s: f32, color: Color32) {
+    use egui::epaint::{CubicBezierShape, PathStroke};
+
+    let sw = 1.8_f32;
+    let psk = PathStroke::new(sw, color);
+    let bezier = |pts: [Pos2; 4]| {
+        CubicBezierShape::from_points_stroke(pts, false, Color32::TRANSPARENT, psk.clone())
+    };
+
+    // Stem x; oval is shifted slightly right of the stem so the stem bisects it.
+    let sx = x0 + s * 0.70;
+    let ox = sx + 0.12 * s;          // oval centre x
+    let oy = cy + 0.95 * s;          // oval centre y  (near G4 line = cy + s)
+    let rx = 0.55 * s;               // oval half-width
+    let ry = 1.10 * s;               // oval half-height
+    let kx = 0.5523 * rx;            // bezier approximation constant
+    let ky = 0.5523 * ry;
+
+    let otop   = Pos2::new(ox,      oy - ry);
+    let oright = Pos2::new(ox + rx, oy);
+    let obot   = Pos2::new(ox,      oy + ry);
+    let oleft  = Pos2::new(ox - rx, oy);
+
+    // ── Oval loop (four quarter-arc cubic bezier segments) ───────────────────
+    painter.add(bezier([otop,   Pos2::new(ox + kx, oy - ry), Pos2::new(ox + rx, oy - ky), oright]));
+    painter.add(bezier([oright, Pos2::new(ox + rx, oy + ky), Pos2::new(ox + kx, oy + ry), obot  ]));
+    painter.add(bezier([obot,   Pos2::new(ox - kx, oy + ry), Pos2::new(ox - rx, oy + ky), oleft ]));
+    painter.add(bezier([oleft,  Pos2::new(ox - rx, oy - ky), Pos2::new(ox - kx, oy - ry), otop  ]));
+
+    // ── Stem (vertical line through the oval) ────────────────────────────────
+    let stem_top_y = cy - 3.10 * s;
+    let stem_bot_y = cy + 3.30 * s;
+    painter.line_segment(
+        [Pos2::new(sx, stem_top_y), Pos2::new(sx, stem_bot_y)],
+        Stroke::new(sw, color),
+    );
+
+    // ── Top curl: loop at stem top, then descend to connect to oval top ──────
+    let curl_end = Pos2::new(sx + 0.60 * s, stem_top_y + 0.45 * s);
+    painter.add(bezier([
+        Pos2::new(sx, stem_top_y),
+        Pos2::new(sx + 0.45 * s, stem_top_y - 0.55 * s),
+        Pos2::new(sx + 0.90 * s, stem_top_y - 0.25 * s),
+        curl_end,
+    ]));
+    painter.add(bezier([
+        curl_end,
+        Pos2::new(sx + 0.25 * s, stem_top_y + 1.00 * s),
+        Pos2::new(sx + 0.10 * s, stem_top_y + 1.60 * s),
+        otop,
+    ]));
+
+    // ── Bottom hook: sweeps right then turns back up ─────────────────────────
+    painter.add(bezier([
+        Pos2::new(sx,             stem_bot_y),
+        Pos2::new(sx + 0.35 * s, stem_bot_y + 0.20 * s),
+        Pos2::new(sx + 0.70 * s, stem_bot_y + 0.05 * s),
+        Pos2::new(sx + 0.50 * s, stem_bot_y - 0.55 * s),
+    ]));
 }
 
 impl eframe::App for TrainerApp {

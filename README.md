@@ -4,7 +4,8 @@ A desktop app for learning the connection between keys on a MIDI keyboard and no
 
 ## Features
 
-- Treble clef staff rendered with correct ledger lines above and below
+- Treble clef symbol drawn on the staff (oval loop, stem, top curl, bottom hook)
+- Ledger lines above and below the staff as needed
 - Connects to any ALSA MIDI input device (USB or hardware MIDI)
 - Note range is configurable to match non-full-sized keyboards
 - Score tracking (correct / total attempts)
