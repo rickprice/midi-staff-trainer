@@ -8,6 +8,7 @@ A desktop app for learning the connection between keys on a MIDI keyboard and no
 - Connects to any ALSA MIDI input device (USB or hardware MIDI)
 - Note range is configurable to match non-full-sized keyboards
 - Score tracking (correct / total attempts)
+- Note name displayed below the staff (matches the note head colour)
 - Correct answers flash green and auto-advance after ~1 second
 - Wrong answers flash red and prompt you to try again
 
