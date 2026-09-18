@@ -3,6 +3,7 @@ name = "midi-staff-trainer"
 version = "0.1.0"
 edition = "2024"
 description = "Interactive MIDI keyboard to musical staff trainer"
+license = "BSD-3-Clause"
 
 [dependencies]
 eframe = "0.31"
