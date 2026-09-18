@@ -57,7 +57,7 @@ impl TrainerApp {
 
     fn handle_midi_note(&mut self, played: u8) {
         if matches!(self.feedback, Feedback::Correct(_)) {
-            return; // ignore spurious notes while showing success
+            return;
         }
         self.score.attempts += 1;
         if played == self.current_note.midi {
@@ -85,7 +85,7 @@ impl TrainerApp {
             let y = cy + (2 - i) as f32 * line_spacing;
             painter.line_segment(
                 [Pos2::new(x0, y), Pos2::new(x1, y)],
-                Stroke::new(1.5, staff_color),
+                Stroke::new(1.5_f32, staff_color),
             );
         }
 
@@ -103,7 +103,7 @@ impl TrainerApp {
         while ly <= note_y + 0.5 {
             painter.line_segment(
                 [Pos2::new(note_x - ledger_hw, ly), Pos2::new(note_x + ledger_hw, ly)],
-                Stroke::new(1.5, staff_color),
+                Stroke::new(1.5_f32, staff_color),
             );
             ly += line_spacing;
         }
@@ -112,7 +112,7 @@ impl TrainerApp {
         while ly >= note_y - 0.5 {
             painter.line_segment(
                 [Pos2::new(note_x - ledger_hw, ly), Pos2::new(note_x + ledger_hw, ly)],
-                Stroke::new(1.5, staff_color),
+                Stroke::new(1.5_f32, staff_color),
             );
             ly -= line_spacing;
         }
@@ -122,34 +122,35 @@ impl TrainerApp {
             Feedback::Wrong { .. } => Color32::from_rgb(210, 60, 60),
             Feedback::Waiting => Color32::from_gray(30),
         };
-        painter.ellipse_filled(
-            Pos2::new(note_x, note_y),
-            Vec2::new(note_r * 1.3, note_r),
-            note_color,
-        );
 
-        // Stem up unless note is high on staff.
+        // egui 0.31 Painter has no ellipse_filled; use circle_filled.
+        painter.circle_filled(Pos2::new(note_x, note_y), note_r, note_color);
+
+        // Stem up unless note is high on staff (B4 = position 5).
         let stem_up = pos < 5;
         let (stem_x, stem_y0, stem_y1) = if stem_up {
-            (note_x + note_r * 1.25, note_y, note_y - line_spacing * 3.5)
+            (note_x + note_r, note_y, note_y - line_spacing * 3.5)
         } else {
-            (note_x - note_r * 1.25, note_y, note_y + line_spacing * 3.5)
+            (note_x - note_r, note_y, note_y + line_spacing * 3.5)
         };
         painter.line_segment(
             [Pos2::new(stem_x, stem_y0), Pos2::new(stem_x, stem_y1)],
-            Stroke::new(1.5, note_color),
+            Stroke::new(1.5_f32, note_color),
         );
     }
 }
 
 impl eframe::App for TrainerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Poll MIDI.
-        if let Some(ref midi) = self.midi {
-            while let Ok(note) = midi.rx.try_recv() {
-                if (self.config.midi_low..=self.config.midi_high).contains(&note) {
-                    self.handle_midi_note(note);
-                }
+        // Collect MIDI notes before mutably borrowing self for handling.
+        let midi_notes: Vec<u8> = self
+            .midi
+            .as_ref()
+            .map(|m| std::iter::from_fn(|| m.rx.try_recv().ok()).collect())
+            .unwrap_or_default();
+        for note in midi_notes {
+            if (self.config.midi_low..=self.config.midi_high).contains(&note) {
+                self.handle_midi_note(note);
             }
         }
 
@@ -194,7 +195,7 @@ impl eframe::App for TrainerApp {
             });
 
             let available = ui.available_rect_before_wrap();
-            let staff_h = 200.0f32.min(available.height() * 0.55);
+            let staff_h = 200.0_f32.min(available.height() * 0.55);
             let staff_rect = Rect::from_center_size(
                 Pos2::new(available.center().x, available.top() + staff_h / 2.0 + 10.0),
                 Vec2::new(available.width(), staff_h),
