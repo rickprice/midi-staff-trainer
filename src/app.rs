@@ -75,12 +75,13 @@ impl TrainerApp {
     fn draw_staff(&self, painter: &Painter, rect: Rect) {
         let cx = rect.center().x;
         let cy = rect.center().y;
-        let line_spacing = 14.0_f32;
+        // Scale so the 5 staff lines occupy about 30% of the available height.
+        let line_spacing = (rect.height() * 0.075).clamp(12.0, 28.0);
         let staff_width = rect.width() * 0.85;
         let x0 = cx - staff_width / 2.0;
         let x1 = cx + staff_width / 2.0;
 
-        let staff_color = Color32::from_gray(40);
+        let staff_color = Color32::from_gray(220);
         for i in 0..5i32 {
             let y = cy + (2 - i) as f32 * line_spacing;
             painter.line_segment(
@@ -120,7 +121,7 @@ impl TrainerApp {
         let note_color = match &self.feedback {
             Feedback::Correct(_) => Color32::from_rgb(50, 180, 80),
             Feedback::Wrong { .. } => Color32::from_rgb(210, 60, 60),
-            Feedback::Waiting => Color32::from_gray(30),
+            Feedback::Waiting => Color32::from_gray(230),
         };
 
         // egui 0.31 Painter has no ellipse_filled; use circle_filled.
@@ -165,9 +166,9 @@ impl eframe::App for TrainerApp {
             }
         }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::TopBottomPanel::top("header").show(ctx, |ui| {
             ui.vertical_centered(|ui| {
-                ui.add_space(10.0);
+                ui.add_space(8.0);
                 ui.heading("MIDI Staff Trainer");
                 ui.add_space(4.0);
                 ui.label(format!(
@@ -177,11 +178,10 @@ impl eframe::App for TrainerApp {
                     Note::new(self.config.midi_low).name(),
                     Note::new(self.config.midi_high).name(),
                 ));
-                ui.add_space(10.0);
+                ui.add_space(8.0);
 
                 if let Some(ref err) = self.midi_error {
                     ui.colored_label(Color32::RED, format!("MIDI error: {err}"));
-                    ui.add_space(4.0);
                     let ports = MidiReceiver::list_ports();
                     if ports.is_empty() {
                         ui.label("No MIDI ports detected.");
@@ -191,19 +191,14 @@ impl eframe::App for TrainerApp {
                             ui.label(format!("  • {p}"));
                         }
                     }
+                    ui.add_space(4.0);
                 }
             });
+        });
 
-            let available = ui.available_rect_before_wrap();
-            let staff_h = 200.0_f32.min(available.height() * 0.55);
-            let staff_rect = Rect::from_center_size(
-                Pos2::new(available.center().x, available.top() + staff_h / 2.0 + 10.0),
-                Vec2::new(available.width(), staff_h),
-            );
-            self.draw_staff(ui.painter(), staff_rect);
-            ui.add_space(staff_h + 20.0);
-
+        egui::TopBottomPanel::bottom("feedback").show(ctx, |ui| {
             ui.vertical_centered(|ui| {
+                ui.add_space(12.0);
                 match &self.feedback {
                     Feedback::Waiting => {
                         ui.label("Play the note shown on the staff.");
@@ -228,7 +223,13 @@ impl eframe::App for TrainerApp {
                         }
                     }
                 }
+                ui.add_space(12.0);
             });
+        });
+
+        egui::CentralPanel::default().show(ctx, |ui| {
+            let rect = ui.available_rect_before_wrap();
+            self.draw_staff(ui.painter(), rect);
         });
     }
 }

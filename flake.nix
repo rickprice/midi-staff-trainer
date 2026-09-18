@@ -21,6 +21,10 @@
             libxkbcommon
             wayland
             libGL
+            libx11
+            libxcursor
+            libxrandr
+            libxi
           ];
         };
         default = self.packages.${system}.midi-staff-trainer;
@@ -35,12 +39,19 @@
               libxkbcommon
               wayland
               libGL
+              libx11
+              libxcursor
+              libxrandr
+              libxi
             ];
-            # Required so egui can find libGL / Wayland at runtime in the dev shell.
             LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
               pkgs.libGL
               pkgs.wayland
               pkgs.libxkbcommon
+              pkgs.libx11
+              pkgs.libxcursor
+              pkgs.libxrandr
+              pkgs.libxi
             ];
           };
         }
