@@ -9,6 +9,11 @@ use std::time::{Duration, Instant};
 
 const CORRECT_DISPLAY_MS: u64 = 900;
 
+enum AppMode {
+    Training,
+    SettingRange(Vec<u8>),
+}
+
 pub struct TrainerApp {
     config: Config,
     midi: Option<MidiReceiver>,
@@ -20,6 +25,9 @@ pub struct TrainerApp {
     note_shown_at: Option<Instant>,   // when the current note appeared; used for latency
     score: Score,
     scheduler: Scheduler,
+    active_low: u8,
+    active_high: u8,
+    mode: AppMode,
 }
 
 #[derive(Default)]
@@ -50,7 +58,9 @@ impl TrainerApp {
             }
             Err(e) => (None, None, Some(e)),
         };
-        let mut scheduler = Scheduler::new(config.midi_low, config.midi_high);
+        let active_low = config.midi_low;
+        let active_high = config.midi_high;
+        let mut scheduler = Scheduler::new(active_low, active_high);
         let current_note = scheduler.pick_next();
         Self {
             config,
@@ -63,6 +73,9 @@ impl TrainerApp {
             note_shown_at: Some(Instant::now()),
             score: Score::default(),
             scheduler,
+            active_low,
+            active_high,
+            mode: AppMode::Training,
         }
     }
 
@@ -93,6 +106,36 @@ impl TrainerApp {
                 got: Note::new(played),
             };
         }
+    }
+
+    fn handle_range_key(&mut self, midi: u8) {
+        if let AppMode::SettingRange(ref mut keys) = self.mode
+            && !keys.contains(&midi) {
+            keys.push(midi);
+        }
+        let result = if let AppMode::SettingRange(ref keys) = self.mode {
+            (keys.len() >= 2).then(|| {
+                (*keys.iter().min().unwrap(), *keys.iter().max().unwrap())
+            })
+        } else {
+            None
+        };
+        if let Some((low, high)) = result {
+            self.set_active_range(low, high);
+        }
+    }
+
+    fn set_active_range(&mut self, low: u8, high: u8) {
+        self.active_low = low;
+        self.active_high = high;
+        self.scheduler = Scheduler::new(low, high);
+        self.mode = AppMode::Training;
+        self.next_note();
+    }
+
+    fn reset_range(&mut self) {
+        let (low, high) = (self.config.midi_low, self.config.midi_high);
+        self.set_active_range(low, high);
     }
 
     fn draw_staff(&self, painter: &Painter, rect: Rect) {
@@ -251,10 +294,27 @@ impl eframe::App for TrainerApp {
             .as_ref()
             .map(|m| std::iter::from_fn(|| m.rx.try_recv().ok()).collect())
             .unwrap_or_default();
+        let is_setting_range = matches!(self.mode, AppMode::SettingRange(_));
         for note in midi_notes {
-            if (self.config.midi_low..=self.config.midi_high).contains(&note) {
+            if is_setting_range {
+                self.handle_range_key(note);
+            } else if (self.active_low..=self.active_high).contains(&note) {
                 self.handle_midi_note(note);
             }
+        }
+
+        // R enters range-capture mode; Esc cancels it.
+        let (r_pressed, esc_pressed) = ctx.input(|i| (
+            i.key_pressed(egui::Key::R),
+            i.key_pressed(egui::Key::Escape),
+        ));
+        if r_pressed && matches!(self.mode, AppMode::Training) {
+            self.mode = AppMode::SettingRange(Vec::new());
+            self.correct_at = None;
+            self.feedback = Feedback::Waiting;
+        }
+        if esc_pressed && matches!(self.mode, AppMode::SettingRange(_)) {
+            self.mode = AppMode::Training;
         }
 
         // Schedule repaint for the auto-advance moment; advance when time arrives.
@@ -270,6 +330,12 @@ impl eframe::App for TrainerApp {
 
         let box_counts = self.scheduler.box_counts();
         let current_box = self.scheduler.note_box(self.current_note.midi);
+        let mode_state: Option<(usize, Option<u8>)> = match &self.mode {
+            AppMode::SettingRange(keys) => Some((keys.len(), keys.first().copied())),
+            AppMode::Training => None,
+        };
+        let range_changed = self.active_low != self.config.midi_low
+            || self.active_high != self.config.midi_high;
 
         egui::TopBottomPanel::top("header").show(ctx, |ui| {
             ui.vertical_centered(|ui| {
@@ -281,14 +347,26 @@ impl eframe::App for TrainerApp {
                 let accuracy_str = self.score.accuracy_pct()
                     .map(|p| format!(" ({p}%)"))
                     .unwrap_or_default();
-                ui.label(format!(
-                    "Score: {}/{}{} | Range: {} – {}",
-                    self.score.correct,
-                    self.score.attempts,
-                    accuracy_str,
-                    Note::new(self.config.midi_low),
-                    Note::new(self.config.midi_high),
-                ));
+                ui.horizontal(|ui| {
+                    ui.label(format!(
+                        "Score: {}/{}{} | Range: {} – {}",
+                        self.score.correct,
+                        self.score.attempts,
+                        accuracy_str,
+                        Note::new(self.active_low),
+                        Note::new(self.active_high),
+                    ));
+                    if mode_state.is_none() {
+                        if ui.small_button("Set Range [R]").clicked() {
+                            self.mode = AppMode::SettingRange(Vec::new());
+                            self.correct_at = None;
+                            self.feedback = Feedback::Waiting;
+                        }
+                        if range_changed && ui.small_button("Reset").clicked() {
+                            self.reset_range();
+                        }
+                    }
+                });
 
                 // Leitner box distribution
                 let box_str = box_counts
@@ -330,35 +408,49 @@ impl eframe::App for TrainerApp {
         egui::TopBottomPanel::bottom("feedback").show(ctx, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(12.0);
-                match self.feedback {
-                    Feedback::Waiting => {
+                if let Some((count, first_key)) = mode_state {
+                    if count == 0 {
+                        ui.label("Press any 2 MIDI keys to define the training range — order doesn't matter.");
+                    } else if let Some(k) = first_key {
                         ui.label(format!(
-                            "Play the note shown on the staff.  [Box {current_box}  |  fast threshold: {FAST_THRESHOLD_MS}ms]"
+                            "Got {} — press one more key to complete the range.",
+                            Note::new(k),
                         ));
-                        if ui.button("Skip").clicked() {
-                            self.next_note();
-                        }
                     }
-                    Feedback::Correct(note) => {
-                        let latency_ms = self.note_shown_at
-                            .map(|t| t.elapsed().as_millis())
-                            .unwrap_or(0);
-                        let speed = if latency_ms <= FAST_THRESHOLD_MS as u128 { "fast" } else { "slow" };
-                        ui.colored_label(
-                            Color32::from_rgb(50, 180, 80),
-                            format!("Correct! ({note})  {latency_ms}ms [{speed}] → Box {current_box}  — next note coming…"),
-                        );
-                        if ui.button("Next now").clicked() {
-                            self.next_note();
-                        }
+                    if ui.button("Cancel [Esc]").clicked() {
+                        self.mode = AppMode::Training;
                     }
-                    Feedback::Wrong { expected, got } => {
-                        ui.colored_label(
-                            Color32::from_rgb(210, 60, 60),
-                            format!("Wrong — expected {expected}, got {got}. Try again.  [Box {current_box}]"),
-                        );
-                        if ui.button("Skip").clicked() {
-                            self.next_note();
+                } else {
+                    match self.feedback {
+                        Feedback::Waiting => {
+                            ui.label(format!(
+                                "Play the note shown on the staff.  [Box {current_box}  |  fast threshold: {FAST_THRESHOLD_MS}ms]"
+                            ));
+                            if ui.button("Skip").clicked() {
+                                self.next_note();
+                            }
+                        }
+                        Feedback::Correct(note) => {
+                            let latency_ms = self.note_shown_at
+                                .map(|t| t.elapsed().as_millis())
+                                .unwrap_or(0);
+                            let speed = if latency_ms <= FAST_THRESHOLD_MS as u128 { "fast" } else { "slow" };
+                            ui.colored_label(
+                                Color32::from_rgb(50, 180, 80),
+                                format!("Correct! ({note})  {latency_ms}ms [{speed}] → Box {current_box}  — next note coming…"),
+                            );
+                            if ui.button("Next now").clicked() {
+                                self.next_note();
+                            }
+                        }
+                        Feedback::Wrong { expected, got } => {
+                            ui.colored_label(
+                                Color32::from_rgb(210, 60, 60),
+                                format!("Wrong — expected {expected}, got {got}. Try again.  [Box {current_box}]"),
+                            );
+                            if ui.button("Skip").clicked() {
+                                self.next_note();
+                            }
                         }
                     }
                 }
