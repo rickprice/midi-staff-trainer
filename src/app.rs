@@ -34,7 +34,7 @@ enum Feedback {
 impl TrainerApp {
     pub fn new(_cc: &eframe::CreationContext) -> Self {
         let config = Config::load();
-        let (midi, midi_port_name, midi_error) = match MidiReceiver::connect(config.midi_port.as_deref()) {
+        let (midi, midi_port_name, midi_error) = match MidiReceiver::connect(config.midi_port.as_deref(), _cc.egui_ctx.clone()) {
             Ok(r) => {
                 let name = r.port_name.clone();
                 (Some(r), Some(name), None)

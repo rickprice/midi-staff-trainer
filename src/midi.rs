@@ -1,3 +1,5 @@
+use crate::staff::Note;
+use egui::Context;
 use midir::{Ignore, MidiInput};
 use std::sync::mpsc::{self, Receiver, Sender};
 
@@ -10,7 +12,7 @@ pub struct MidiReceiver {
 impl MidiReceiver {
     /// Connect to the first port whose name contains `port_hint`,
     /// or the very first available port when `port_hint` is `None`.
-    pub fn connect(port_hint: Option<&str>) -> Result<Self, String> {
+    pub fn connect(port_hint: Option<&str>, ctx: Context) -> Result<Self, String> {
         let mut input = MidiInput::new("midi-staff-trainer").map_err(|e| e.to_string())?;
         input.ignore(Ignore::None);
 
@@ -38,8 +40,9 @@ impl MidiReceiver {
                 move |_stamp, msg, _| {
                     // Note-on (status 0x9n) with velocity > 0.
                     if msg.len() >= 3 && (msg[0] & 0xF0) == 0x90 && msg[2] > 0 {
-                        eprintln!("MIDI note: {} (velocity {})", msg[1], msg[2]);
+                        eprintln!("MIDI note: {} / {} (velocity {})", msg[1], Note::new(msg[1]), msg[2]);
                         let _ = tx.send(msg[1]);
+                        ctx.request_repaint();
                     }
                 },
                 (),
