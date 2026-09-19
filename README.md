@@ -60,8 +60,8 @@ The test suite covers `Note` (letter names, octaves, display, accidentals, staff
 On first launch a config file is written to `~/.config/midi-staff-trainer/config.toml`:
 
 ```toml
-midi_low = 48   # C3 — lowest note your keyboard can send
-midi_high = 84  # C6 — highest note your keyboard can send
+midi_low = 41   # F2 — lowest note your keyboard can send
+midi_high = 72  # C5 — highest note your keyboard can send
 # midi_port = "My Keyboard"  # optional: substring of MIDI port name to connect to
 ```
 
@@ -72,6 +72,7 @@ Common keyboard ranges:
 | Keys | Low | High | Example |
 |------|-----|------|---------|
 | 25   | 60 (C4) | 84 (C6) | mini controllers |
+| 32   | 41 (F2) | 72 (C5) | Roland Cakewalk A300-PRO |
 | 49   | 48 (C3) | 84 (C6) | Arturia MiniLab |
 | 61   | 36 (C2) | 96 (C7) | Alesis Q61 |
 | 88   | 21 (A0) | 108 (C8) | full piano |

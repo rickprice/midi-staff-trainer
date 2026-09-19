@@ -14,8 +14,8 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            midi_low: 48,  // C3
-            midi_high: 84, // C6
+            midi_low: 41,  // F2 (Roland Cakewalk A300-PRO minimum)
+            midi_high: 72, // C5 (Roland Cakewalk A300-PRO maximum)
             midi_port: None,
         }
     }
@@ -67,8 +67,8 @@ mod tests {
     #[test]
     fn default_midi_range() {
         let cfg = Config::default();
-        assert_eq!(cfg.midi_low, 48);
-        assert_eq!(cfg.midi_high, 84);
+        assert_eq!(cfg.midi_low, 41);  // F2
+        assert_eq!(cfg.midi_high, 72); // C5
     }
 
     #[test]
