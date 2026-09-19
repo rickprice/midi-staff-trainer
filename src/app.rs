@@ -206,19 +206,6 @@ impl TrainerApp {
             Stroke::new(1.5_f32, note_color),
         );
 
-        // Note name label: at least 3 line-spacings below the bottom staff line,
-        // or below the note head itself — whichever is lower.
-        let label_y = f32::max(
-            bottom_line_y + line_spacing * 3.0,
-            note_y + note_r + line_spacing,
-        );
-        painter.text(
-            Pos2::new(note_x, label_y),
-            Align2::CENTER_CENTER,
-            self.current_note.to_string(),
-            FontId::proportional(line_spacing * 1.1),
-            note_color,
-        );
     }
 }
 
@@ -429,6 +416,10 @@ impl eframe::App for TrainerApp {
                             ui.label(format!(
                                 "Play the note shown on the staff.  [Box {current_box}  |  fast threshold: {FAST_THRESHOLD_MS}ms]"
                             ));
+                            ui.colored_label(
+                                Color32::from_gray(140),
+                                format!("Note: {}", self.current_note),
+                            );
                             if ui.button("Skip").clicked() {
                                 self.next_note();
                             }
