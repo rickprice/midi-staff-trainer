@@ -30,11 +30,7 @@ struct Score {
 
 impl Score {
     fn accuracy_pct(&self) -> Option<u32> {
-        if self.attempts == 0 {
-            None
-        } else {
-            Some(self.correct * 100 / self.attempts)
-        }
+        (self.correct * 100).checked_div(self.attempts)
     }
 }
 

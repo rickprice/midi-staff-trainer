@@ -74,16 +74,6 @@ pub fn natural_notes_in_range(low: u8, high: u8) -> Vec<u8> {
         .collect()
 }
 
-/// Picks a uniformly random natural note within `low..=high`.
-/// Falls back to C4 (MIDI 60) when the range contains no natural notes.
-#[must_use]
-pub fn random_natural_note(low: u8, high: u8) -> Note {
-    use rand::seq::SliceRandom as _;
-    natural_notes_in_range(low, high)
-        .choose(&mut rand::thread_rng())
-        .copied()
-        .map_or(Note::new(60), Note::new)
-}
 
 #[cfg(test)]
 mod tests {
@@ -318,42 +308,4 @@ mod tests {
         assert_eq!(natural_notes_in_range(60, 71).len(), 7);
     }
 
-    // ── random_natural_note ───────────────────────────────────────────────────
-
-    #[test]
-    fn random_note_always_in_range() {
-        let (low, high) = (48u8, 84u8);
-        for _ in 0..200 {
-            let note = random_natural_note(low, high);
-            assert!(note.midi >= low && note.midi <= high, "note {note} outside {low}–{high}");
-        }
-    }
-
-    #[test]
-    fn random_note_never_accidental() {
-        for _ in 0..200 {
-            assert!(!random_natural_note(48, 84).is_accidental());
-        }
-    }
-
-    #[test]
-    fn random_note_fallback_when_no_naturals() {
-        assert_eq!(random_natural_note(61, 61).midi, 60); // only C#4 in range → C4 fallback
-    }
-
-    #[test]
-    fn random_note_single_choice() {
-        for _ in 0..20 {
-            assert_eq!(random_natural_note(60, 60).midi, 60); // only C4 available
-        }
-    }
-
-    #[test]
-    fn random_note_produces_variety() {
-        // With a 3-octave range (C3–C6, 22 natural notes) we should see at least
-        // 5 distinct notes in 50 draws — probability of failure is negligibly small.
-        let notes: std::collections::HashSet<u8> =
-            (0..50).map(|_| random_natural_note(48, 84).midi).collect();
-        assert!(notes.len() >= 5, "random_natural_note appears non-random: only {}", notes.len());
-    }
 }

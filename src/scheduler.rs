@@ -36,10 +36,9 @@ impl Scheduler {
         }
 
         let mut candidates: Vec<u8> = self.states.keys().copied().collect();
-        if candidates.len() > 1 {
-            if let Some(last) = self.last_note {
-                candidates.retain(|&m| m != last);
-            }
+        if candidates.len() > 1
+            && let Some(last) = self.last_note {
+            candidates.retain(|&m| m != last);
         }
 
         let weights: Vec<f32> = candidates
@@ -72,11 +71,9 @@ impl Scheduler {
 
     /// Correct answer: advance one box if fast, stay put if slow.
     pub fn record_correct(&mut self, midi: u8, latency: Duration) {
-        if let Some(state) = self.states.get_mut(&midi) {
-            if latency.as_millis() <= FAST_THRESHOLD_MS as u128 {
-                state.box_level = (state.box_level + 1).min(4);
-            }
-            // slow correct → stay in same box (no change needed)
+        if let Some(state) = self.states.get_mut(&midi)
+            && latency.as_millis() <= FAST_THRESHOLD_MS as u128 {
+            state.box_level = (state.box_level + 1).min(4);
         }
     }
 

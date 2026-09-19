@@ -98,7 +98,7 @@ mod tests {
 
     #[test]
     fn roundtrip_none_port() {
-        let original = Config::default();
+        let original = Config { midi_port: None, ..Config::default() };
         let text = toml::to_string_pretty(&original).expect("serialise");
         let restored: Config = toml::from_str(&text).expect("deserialise");
         assert_eq!(restored.midi_port, None);
