@@ -3,6 +3,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 
 pub struct MidiReceiver {
     pub rx: Receiver<u8>,
+    pub port_name: String,
     _conn: midir::MidiInputConnection<()>, // keeps the connection alive
 }
 
@@ -37,6 +38,7 @@ impl MidiReceiver {
                 move |_stamp, msg, _| {
                     // Note-on (status 0x9n) with velocity > 0.
                     if msg.len() >= 3 && (msg[0] & 0xF0) == 0x90 && msg[2] > 0 {
+                        eprintln!("MIDI note: {} (velocity {})", msg[1], msg[2]);
                         let _ = tx.send(msg[1]);
                     }
                 },
@@ -45,7 +47,7 @@ impl MidiReceiver {
             .map_err(|e| e.to_string())?;
 
         eprintln!("Connected to MIDI port: {port_name}");
-        Ok(Self { rx, _conn: conn })
+        Ok(Self { rx, port_name, _conn: conn })
     }
 
     /// List the names of all currently available MIDI input ports.

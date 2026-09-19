@@ -11,6 +11,7 @@ const CORRECT_DISPLAY_MS: u64 = 900;
 pub struct TrainerApp {
     config: Config,
     midi: Option<MidiReceiver>,
+    midi_port_name: Option<String>,
     midi_error: Option<String>,
     current_note: Note,
     feedback: Feedback,
@@ -33,14 +34,18 @@ enum Feedback {
 impl TrainerApp {
     pub fn new(_cc: &eframe::CreationContext) -> Self {
         let config = Config::load();
-        let (midi, midi_error) = match MidiReceiver::connect(config.midi_port.as_deref()) {
-            Ok(r) => (Some(r), None),
-            Err(e) => (None, Some(e)),
+        let (midi, midi_port_name, midi_error) = match MidiReceiver::connect(config.midi_port.as_deref()) {
+            Ok(r) => {
+                let name = r.port_name.clone();
+                (Some(r), Some(name), None)
+            }
+            Err(e) => (None, None, Some(e)),
         };
         let current_note = random_natural_note(config.midi_low, config.midi_high);
         Self {
             config,
             midi,
+            midi_port_name,
             midi_error,
             current_note,
             feedback: Feedback::Waiting,
@@ -257,6 +262,12 @@ impl eframe::App for TrainerApp {
                     Note::new(self.config.midi_low),
                     Note::new(self.config.midi_high),
                 ));
+                if let Some(ref name) = self.midi_port_name {
+                    ui.colored_label(
+                        Color32::from_rgb(50, 180, 80),
+                        format!("Connected: {name}"),
+                    );
+                }
                 ui.add_space(8.0);
 
                 if let Some(ref err) = self.midi_error {
