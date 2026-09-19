@@ -1,7 +1,8 @@
 use crate::{
     config::Config,
     midi::MidiReceiver,
-    staff::{Note, random_natural_note},
+    scheduler::{Scheduler, BOX_WEIGHTS, FAST_THRESHOLD_MS},
+    staff::Note,
 };
 use egui::{Align2, Color32, FontId, Painter, Pos2, Rect, Stroke};
 use std::time::{Duration, Instant};
@@ -16,13 +17,25 @@ pub struct TrainerApp {
     current_note: Note,
     feedback: Feedback,
     correct_at: Option<Instant>,
+    note_shown_at: Option<Instant>,   // when the current note appeared; used for latency
     score: Score,
+    scheduler: Scheduler,
 }
 
 #[derive(Default)]
 struct Score {
     correct: u32,
     attempts: u32,
+}
+
+impl Score {
+    fn accuracy_pct(&self) -> Option<u32> {
+        if self.attempts == 0 {
+            None
+        } else {
+            Some(self.correct * 100 / self.attempts)
+        }
+    }
 }
 
 enum Feedback {
@@ -41,7 +54,8 @@ impl TrainerApp {
             }
             Err(e) => (None, None, Some(e)),
         };
-        let current_note = random_natural_note(config.midi_low, config.midi_high);
+        let mut scheduler = Scheduler::new(config.midi_low, config.midi_high);
+        let current_note = scheduler.pick_next();
         Self {
             config,
             midi,
@@ -50,14 +64,17 @@ impl TrainerApp {
             current_note,
             feedback: Feedback::Waiting,
             correct_at: None,
+            note_shown_at: Some(Instant::now()),
             score: Score::default(),
+            scheduler,
         }
     }
 
     fn next_note(&mut self) {
-        self.current_note = random_natural_note(self.config.midi_low, self.config.midi_high);
+        self.current_note = self.scheduler.pick_next();
         self.feedback = Feedback::Waiting;
         self.correct_at = None;
+        self.note_shown_at = Some(Instant::now());
     }
 
     fn handle_midi_note(&mut self, played: u8) {
@@ -66,10 +83,15 @@ impl TrainerApp {
         }
         self.score.attempts += 1;
         if played == self.current_note.midi {
+            let latency = self.note_shown_at
+                .map(|t| t.elapsed())
+                .unwrap_or(Duration::from_secs(99));
+            self.scheduler.record_correct(played, latency);
             self.score.correct += 1;
             self.feedback = Feedback::Correct(self.current_note);
             self.correct_at = Some(Instant::now());
         } else {
+            self.scheduler.record_incorrect(self.current_note.midi);
             self.feedback = Feedback::Wrong {
                 expected: self.current_note,
                 got: Note::new(played),
@@ -250,18 +272,41 @@ impl eframe::App for TrainerApp {
             }
         }
 
+        let box_counts = self.scheduler.box_counts();
+        let current_box = self.scheduler.note_box(self.current_note.midi);
+
         egui::TopBottomPanel::top("header").show(ctx, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(8.0);
                 ui.heading("MIDI Staff Trainer");
                 ui.add_space(4.0);
+
+                // Score and accuracy
+                let accuracy_str = self.score.accuracy_pct()
+                    .map(|p| format!(" ({p}%)"))
+                    .unwrap_or_default();
                 ui.label(format!(
-                    "Score: {}/{} | Range: {} – {}",
+                    "Score: {}/{}{} | Range: {} – {}",
                     self.score.correct,
                     self.score.attempts,
+                    accuracy_str,
                     Note::new(self.config.midi_low),
                     Note::new(self.config.midi_high),
                 ));
+
+                // Leitner box distribution
+                let box_str = box_counts
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &n)| format!("{i}:{n}"))
+                    .collect::<Vec<_>>()
+                    .join("  ");
+                ui.label(format!(
+                    "Boxes (weight {:.0}/{:.0}/{:.0}/{:.1}/{:.1}) → {box_str}",
+                    BOX_WEIGHTS[0], BOX_WEIGHTS[1], BOX_WEIGHTS[2],
+                    BOX_WEIGHTS[3], BOX_WEIGHTS[4],
+                ));
+
                 if let Some(ref name) = self.midi_port_name {
                     ui.colored_label(
                         Color32::from_rgb(50, 180, 80),
@@ -291,15 +336,21 @@ impl eframe::App for TrainerApp {
                 ui.add_space(12.0);
                 match self.feedback {
                     Feedback::Waiting => {
-                        ui.label("Play the note shown on the staff.");
+                        ui.label(format!(
+                            "Play the note shown on the staff.  [Box {current_box}  |  fast threshold: {FAST_THRESHOLD_MS}ms]"
+                        ));
                         if ui.button("Skip").clicked() {
                             self.next_note();
                         }
                     }
                     Feedback::Correct(note) => {
+                        let latency_ms = self.note_shown_at
+                            .map(|t| t.elapsed().as_millis())
+                            .unwrap_or(0);
+                        let speed = if latency_ms <= FAST_THRESHOLD_MS as u128 { "fast" } else { "slow" };
                         ui.colored_label(
                             Color32::from_rgb(50, 180, 80),
-                            format!("Correct! ({note}) — next note coming…"),
+                            format!("Correct! ({note})  {latency_ms}ms [{speed}] → Box {current_box}  — next note coming…"),
                         );
                         if ui.button("Next now").clicked() {
                             self.next_note();
@@ -308,7 +359,7 @@ impl eframe::App for TrainerApp {
                     Feedback::Wrong { expected, got } => {
                         ui.colored_label(
                             Color32::from_rgb(210, 60, 60),
-                            format!("Wrong — expected {expected}, got {got}. Try again."),
+                            format!("Wrong — expected {expected}, got {got}. Try again.  [Box {current_box}]"),
                         );
                         if ui.button("Skip").clicked() {
                             self.next_note();

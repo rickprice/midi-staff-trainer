@@ -1,6 +1,7 @@
 mod app;
 mod config;
 mod midi;
+mod scheduler;
 mod staff;
 
 fn main() -> eframe::Result {
