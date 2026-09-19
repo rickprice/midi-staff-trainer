@@ -62,7 +62,7 @@ On first launch a config file is written to `~/.config/midi-staff-trainer/config
 ```toml
 midi_low = 41   # F2 — lowest note your keyboard can send
 midi_high = 72  # C5 — highest note your keyboard can send
-# midi_port = "My Keyboard"  # optional: substring of MIDI port name to connect to
+midi_port = "A-PRO 1"  # substring of MIDI port name to connect to
 ```
 
 Set `midi_low` and `midi_high` to the actual physical range of your keyboard using [MIDI note numbers](https://en.wikipedia.org/wiki/Scientific_pitch_notation) (middle C = 60). If `midi_port` is not set, the first available port is used automatically.

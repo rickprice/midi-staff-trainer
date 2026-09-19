@@ -16,7 +16,7 @@ impl Default for Config {
         Self {
             midi_low: 41,  // F2 (Roland Cakewalk A300-PRO minimum)
             midi_high: 72, // C5 (Roland Cakewalk A300-PRO maximum)
-            midi_port: None,
+            midi_port: Some("A-PRO 1".to_string()),
         }
     }
 }
@@ -72,8 +72,8 @@ mod tests {
     }
 
     #[test]
-    fn default_no_port() {
-        assert!(Config::default().midi_port.is_none());
+    fn default_port_matches_a300pro() {
+        assert_eq!(Config::default().midi_port.as_deref(), Some("A-PRO 1"));
     }
 
     #[test]
