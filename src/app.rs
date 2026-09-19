@@ -46,6 +46,7 @@ enum Feedback {
     Waiting,
     Correct(Note),
     Wrong { expected: Note, got: Note },
+    OutOfRange(Note),
 }
 
 impl TrainerApp {
@@ -188,7 +189,7 @@ impl TrainerApp {
         let note_color = match self.feedback {
             Feedback::Correct(_) => Color32::from_rgb(50, 180, 80),
             Feedback::Wrong { .. } => Color32::from_rgb(210, 60, 60),
-            Feedback::Waiting => Color32::from_gray(230),
+            Feedback::Waiting | Feedback::OutOfRange(_) => Color32::from_gray(230),
         };
 
         painter.circle_filled(Pos2::new(note_x, note_y), note_r, note_color);
@@ -300,6 +301,8 @@ impl eframe::App for TrainerApp {
                 self.handle_range_key(note);
             } else if (self.active_low..=self.active_high).contains(&note) {
                 self.handle_midi_note(note);
+            } else {
+                self.feedback = Feedback::OutOfRange(Note::new(note));
             }
         }
 
@@ -447,6 +450,18 @@ impl eframe::App for TrainerApp {
                             ui.colored_label(
                                 Color32::from_rgb(210, 60, 60),
                                 format!("Wrong — expected {expected}, got {got}. Try again.  [Box {current_box}]"),
+                            );
+                            if ui.button("Skip").clicked() {
+                                self.next_note();
+                            }
+                        }
+                        Feedback::OutOfRange(note) => {
+                            ui.colored_label(
+                                Color32::from_rgb(180, 140, 50),
+                                format!("You played {note} — outside the training range ({} – {}). Play a note within range.",
+                                    Note::new(self.active_low),
+                                    Note::new(self.active_high),
+                                ),
                             );
                             if ui.button("Skip").clicked() {
                                 self.next_note();

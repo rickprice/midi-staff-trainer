@@ -12,6 +12,7 @@ A desktop app for learning the connection between keys on a MIDI keyboard and no
 - Note name displayed below the staff (matches the note head colour)
 - Correct answers flash green and auto-advance after ~1 second
 - Wrong answers flash red and prompt you to try again
+- Notes played outside the active training range are identified by name without counting as an attempt
 
 ## Requirements
 
