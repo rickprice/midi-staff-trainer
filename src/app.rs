@@ -4,7 +4,7 @@ use crate::{
     scheduler::{Scheduler, BOX_WEIGHTS, FAST_THRESHOLD_MS},
     staff::Note,
 };
-use egui::{Align2, Color32, FontId, Painter, Pos2, Rect, Stroke};
+use egui::{Color32, Painter, Pos2, Rect, Stroke};
 use std::time::{Duration, Instant};
 
 const CORRECT_DISPLAY_MS: u64 = 900;

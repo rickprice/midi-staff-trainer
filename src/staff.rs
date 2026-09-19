@@ -308,4 +308,61 @@ mod tests {
         assert_eq!(natural_notes_in_range(60, 71).len(), 7);
     }
 
+    #[test]
+    fn natural_notes_full_piano_range() {
+        // 88-key piano: A0 (21) to C8 (108) has 52 white keys.
+        assert_eq!(natural_notes_in_range(21, 108).len(), 52);
+    }
+
+    #[test]
+    fn natural_notes_are_ascending() {
+        let notes = natural_notes_in_range(36, 96);
+        for window in notes.windows(2) {
+            assert!(window[0] < window[1], "Notes should be in ascending order");
+        }
+    }
+
+    // ── MIDI boundary values (0 and 127) ─────────────────────────────────────
+
+    #[test]
+    fn midi_zero_is_c_minus_one() {
+        let n = Note::new(0);
+        assert_eq!(n.letter(), "C");
+        assert_eq!(n.octave(), -1);
+        assert_eq!(n.to_string(), "C-1");
+        assert!(!n.is_accidental());
+    }
+
+    #[test]
+    fn midi_127_is_g9() {
+        let n = Note::new(127);
+        assert_eq!(n.letter(), "G");
+        assert_eq!(n.octave(), 9);
+        assert_eq!(n.to_string(), "G9");
+        assert!(!n.is_accidental());
+    }
+
+    #[test]
+    fn staff_position_midi_zero() {
+        // C-1: diatonic step 0, octave offset (-1 - 4) * 7 = -35.
+        assert_eq!(Note::new(0).staff_position(), -35);
+    }
+
+    #[test]
+    fn staff_position_midi_127() {
+        // G9: diatonic step 4, octave offset (9 - 4) * 7 = 35.
+        assert_eq!(Note::new(127).staff_position(), 39);
+    }
+
+    #[test]
+    fn natural_notes_at_midi_zero() {
+        assert_eq!(natural_notes_in_range(0, 0), [0]); // C-1 is natural
+    }
+
+    #[test]
+    fn accidental_at_midi_one() {
+        assert!(Note::new(1).is_accidental()); // C#-1
+        assert_eq!(natural_notes_in_range(1, 1), []);
+    }
+
 }
