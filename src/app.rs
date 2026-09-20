@@ -417,7 +417,7 @@ impl eframe::App for TrainerApp {
                                 "Play the note shown on the staff.  [Box {current_box}  |  fast threshold: {FAST_THRESHOLD_MS}ms]"
                             ));
                             ui.colored_label(
-                                Color32::from_gray(140),
+                                Color32::from_rgb(212, 175, 55),
                                 format!("Note: {}", self.current_note),
                             );
                             if ui.button("Skip").clicked() {
