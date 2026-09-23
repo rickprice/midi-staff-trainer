@@ -3,6 +3,7 @@ use crate::{
     midi::MidiReceiver,
     scheduler::{Scheduler, BOX_WEIGHTS, FAST_THRESHOLD_MS},
     staff::Note,
+    state::AppState,
 };
 use egui::{Color32, FontData, FontDefinitions, FontFamily, FontId, Painter, Pos2, Rect, Stroke};
 use std::time::{Duration, Instant};
@@ -16,6 +17,7 @@ enum AppMode {
 
 pub struct TrainerApp {
     config: Config,
+    app_state: AppState,
     midi: Option<MidiReceiver>,
     midi_port_name: Option<String>,
     midi_error: Option<String>,
@@ -65,6 +67,7 @@ impl TrainerApp {
         _cc.egui_ctx.set_fonts(fonts);
 
         let config = Config::load();
+        let app_state = AppState::load();
         let (midi, midi_port_name, midi_error) = match MidiReceiver::connect(config.midi_port.as_deref(), _cc.egui_ctx.clone()) {
             Ok(r) => {
                 let name = r.port_name.clone();
@@ -72,12 +75,13 @@ impl TrainerApp {
             }
             Err(e) => (None, None, Some(e)),
         };
-        let active_low = config.training_low.unwrap_or(config.midi_low);
-        let active_high = config.training_high.unwrap_or(config.midi_high);
+        let active_low = app_state.training_low.unwrap_or(config.midi_low);
+        let active_high = app_state.training_high.unwrap_or(config.midi_high);
         let mut scheduler = Scheduler::new(active_low, active_high);
         let current_note = scheduler.pick_next();
         Self {
             config,
+            app_state,
             midi,
             midi_port_name,
             midi_error,
@@ -142,9 +146,9 @@ impl TrainerApp {
     fn set_active_range(&mut self, low: u8, high: u8) {
         self.active_low = low;
         self.active_high = high;
-        self.config.training_low = Some(low);
-        self.config.training_high = Some(high);
-        self.config.save();
+        self.app_state.training_low = Some(low);
+        self.app_state.training_high = Some(high);
+        self.app_state.save();
         self.scheduler = Scheduler::new(low, high);
         self.mode = AppMode::Training;
         self.next_note();

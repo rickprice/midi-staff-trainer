@@ -3,6 +3,7 @@ mod config;
 mod midi;
 mod scheduler;
 mod staff;
+mod state;
 
 fn main() -> eframe::Result {
     let native_options = eframe::NativeOptions {
