@@ -9,6 +9,12 @@ pub struct Config {
     pub midi_high: u8,
     /// Substring of the MIDI input port name to connect to (`None` → first port).
     pub midi_port: Option<String>,
+    /// Last active training range low bound (persisted across sessions).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub training_low: Option<u8>,
+    /// Last active training range high bound (persisted across sessions).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub training_high: Option<u8>,
 }
 
 impl Default for Config {
@@ -17,6 +23,8 @@ impl Default for Config {
             midi_low: 41,  // F2 (Roland Cakewalk A300-PRO minimum)
             midi_high: 72, // C5 (Roland Cakewalk A300-PRO maximum)
             midi_port: Some("A-PRO 1".to_string()),
+            training_low: None,
+            training_high: None,
         }
     }
 }
@@ -90,6 +98,8 @@ mod tests {
             midi_low: 36,
             midi_high: 96,
             midi_port: Some("My Keyboard".to_string()),
+            training_low: None,
+            training_high: None,
         };
         let text = toml::to_string_pretty(&original).expect("serialise");
         let restored: Config = toml::from_str(&text).expect("deserialise");
@@ -137,7 +147,7 @@ midi_port = "Alesis Q88"
 
     #[test]
     fn min_max_midi_values_survive_roundtrip() {
-        let cfg = Config { midi_low: 0, midi_high: 127, midi_port: None };
+        let cfg = Config { midi_low: 0, midi_high: 127, midi_port: None, training_low: None, training_high: None };
         let text = toml::to_string_pretty(&cfg).expect("serialise");
         let restored: Config = toml::from_str(&text).expect("deserialise");
         assert_eq!(restored.midi_low, 0);

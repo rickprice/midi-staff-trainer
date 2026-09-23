@@ -72,8 +72,8 @@ impl TrainerApp {
             }
             Err(e) => (None, None, Some(e)),
         };
-        let active_low = config.midi_low;
-        let active_high = config.midi_high;
+        let active_low = config.training_low.unwrap_or(config.midi_low);
+        let active_high = config.training_high.unwrap_or(config.midi_high);
         let mut scheduler = Scheduler::new(active_low, active_high);
         let current_note = scheduler.pick_next();
         Self {
@@ -142,6 +142,9 @@ impl TrainerApp {
     fn set_active_range(&mut self, low: u8, high: u8) {
         self.active_low = low;
         self.active_high = high;
+        self.config.training_low = Some(low);
+        self.config.training_high = Some(high);
+        self.config.save();
         self.scheduler = Scheduler::new(low, high);
         self.mode = AppMode::Training;
         self.next_note();
