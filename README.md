@@ -4,7 +4,7 @@ A desktop app for learning the connection between keys on a MIDI keyboard and no
 
 ## Features
 
-- Treble clef symbol drawn on the staff (oval loop, stem, top curl, bottom hook)
+- Treble clef rendered using the Noto Music font glyph (authentic engraved style)
 - Ledger lines above and below the staff as needed
 - Connects to any ALSA MIDI input device (USB or hardware MIDI)
 - Note range is configurable to match non-full-sized keyboards
