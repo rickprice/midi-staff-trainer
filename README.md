@@ -13,6 +13,7 @@ A desktop app for learning the connection between keys on a MIDI keyboard and no
 - Correct answers flash green and auto-advance after ~1 second
 - Wrong answers flash red and prompt you to try again
 - Notes played outside the active training range are identified by name without counting as an attempt
+- Training range is remembered across sessions (stored in `~/.cache/midi-staff-trainer/state.toml`)
 
 ## Requirements
 
@@ -54,7 +55,7 @@ nix develop
 cargo test
 ```
 
-The test suite covers `Note` (letter names, octaves, display, accidentals, staff positions), `natural_notes_in_range` (range filtering, edge cases), `random_natural_note` (range correctness, no accidentals, variety), and `Config` (defaults, TOML round-trips, partial overrides).
+The test suite covers `Note` (letter names, octaves, display, accidentals, staff positions), `natural_notes_in_range` (range filtering, edge cases), `random_natural_note` (range correctness, no accidentals, variety), `Config` (defaults, TOML round-trips, partial overrides), and `AppState` (defaults, TOML round-trips, missing-file fallback).
 
 ## Configuration
 
@@ -83,7 +84,8 @@ Common keyboard ranges:
 | File | Responsibility |
 |------|---------------|
 | `src/staff.rs` | `Note` type — letter names, octaves, staff positions, random picker |
-| `src/config.rs` | TOML config — load / save / defaults |
+| `src/config.rs` | TOML config — load / save / defaults (`~/.config/…/config.toml`) |
+| `src/state.rs` | Runtime state — training range persisted across sessions (`~/.cache/…/state.toml`) |
 | `src/midi.rs` | ALSA MIDI input connection and port listing |
 | `src/app.rs` | egui application — staff drawing, MIDI polling, feedback state |
 | `src/main.rs` | Entry point |
