@@ -1,13 +1,13 @@
 [package]
 name = "midi-staff-trainer"
-version = "0.4.3"
+version = "0.4.4"
 edition = "2024"
 description = "Interactive MIDI keyboard to musical staff trainer"
 license = "BSD-3-Clause"
 
 [dependencies]
-eframe = "0.31"
-egui = "0.31"
+eframe = "0.36"
+egui = "0.36"
 midir = "0.10"
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }
