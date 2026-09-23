@@ -415,9 +415,10 @@ impl eframe::App for TrainerApp {
                         Feedback::OutOfRange(note) => {
                             ui.colored_label(
                                 Color32::from_rgb(180, 140, 50),
-                                format!("You played {note} — outside the training range ({} – {}). Play a note within range.",
+                                format!("You played {note} — outside the training range ({} – {}). Expected: {}.",
                                     Note::new(self.active_low),
                                     Note::new(self.active_high),
+                                    self.current_note,
                                 ),
                             );
                             if ui.button("Skip").clicked() {
