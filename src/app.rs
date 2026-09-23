@@ -4,7 +4,7 @@ use crate::{
     scheduler::{Scheduler, BOX_WEIGHTS, FAST_THRESHOLD_MS},
     staff::Note,
 };
-use egui::{Color32, Painter, Pos2, Rect, Stroke};
+use egui::{Color32, FontData, FontDefinitions, FontFamily, FontId, Painter, Pos2, Rect, Stroke};
 use std::time::{Duration, Instant};
 
 const CORRECT_DISPLAY_MS: u64 = 900;
@@ -51,6 +51,19 @@ enum Feedback {
 
 impl TrainerApp {
     pub fn new(_cc: &eframe::CreationContext) -> Self {
+        // Register the Noto Music font so egui can render the treble clef glyph.
+        let mut fonts = FontDefinitions::default();
+        fonts.font_data.insert(
+            "NotoMusic".to_owned(),
+            FontData::from_static(include_bytes!("../fonts/NotoMusic-Regular.otf")).into(),
+        );
+        fonts
+            .families
+            .entry(FontFamily::Name("NotoMusic".into()))
+            .or_default()
+            .push("NotoMusic".to_owned());
+        _cc.egui_ctx.set_fonts(fonts);
+
         let config = Config::load();
         let (midi, midi_port_name, midi_error) = match MidiReceiver::connect(config.midi_port.as_deref(), _cc.egui_ctx.clone()) {
             Ok(r) => {
@@ -209,69 +222,22 @@ impl TrainerApp {
     }
 }
 
-/// Draws a treble clef symbol at the left edge of the staff.
+/// Draws a treble clef using the Noto Music font glyph (U+1D11E).
 ///
-/// `x0` — left edge of the staff lines; `cy` — vertical centre of the staff
-/// (the B4 / middle line); `s` — line spacing in pixels.
+/// `x0` — left edge of the staff lines; `cy` — vertical centre (B4 line);
+/// `s` — line spacing in pixels.
 fn draw_treble_clef(painter: &Painter, x0: f32, cy: f32, s: f32, color: Color32) {
-    use egui::epaint::{CubicBezierShape, PathStroke};
-
-    let sw = 1.8_f32;
-    let psk = PathStroke::new(sw, color);
-    let bezier = |pts: [Pos2; 4]| {
-        CubicBezierShape::from_points_stroke(pts, false, Color32::TRANSPARENT, psk.clone())
-    };
-
-    // Stem x; oval is shifted slightly right of the stem so the stem bisects it.
-    let sx = x0 + s * 0.70;
-    let ox = sx + 0.12 * s;          // oval centre x
-    let oy = cy + 0.95 * s;          // oval centre y  (near G4 line = cy + s)
-    let rx = 0.55 * s;               // oval half-width
-    let ry = 1.10 * s;               // oval half-height
-    let kx = 0.5523 * rx;            // bezier approximation constant
-    let ky = 0.5523 * ry;
-
-    let otop   = Pos2::new(ox,      oy - ry);
-    let oright = Pos2::new(ox + rx, oy);
-    let obot   = Pos2::new(ox,      oy + ry);
-    let oleft  = Pos2::new(ox - rx, oy);
-
-    // ── Oval loop (four quarter-arc cubic bezier segments) ───────────────────
-    painter.add(bezier([otop,   Pos2::new(ox + kx, oy - ry), Pos2::new(ox + rx, oy - ky), oright]));
-    painter.add(bezier([oright, Pos2::new(ox + rx, oy + ky), Pos2::new(ox + kx, oy + ry), obot  ]));
-    painter.add(bezier([obot,   Pos2::new(ox - kx, oy + ry), Pos2::new(ox - rx, oy + ky), oleft ]));
-    painter.add(bezier([oleft,  Pos2::new(ox - rx, oy - ky), Pos2::new(ox - kx, oy - ry), otop  ]));
-
-    // ── Stem (vertical line through the oval) ────────────────────────────────
-    let stem_top_y = cy - 3.10 * s;
-    let stem_bot_y = cy + 3.30 * s;
-    painter.line_segment(
-        [Pos2::new(sx, stem_top_y), Pos2::new(sx, stem_bot_y)],
-        Stroke::new(sw, color),
+    // The glyph is anchored so its vertical midpoint sits on the G4 line.
+    // Font size and x-offset are tuned to match the staff proportions.
+    let font_size = s * 4.5;
+    let pos = Pos2::new(x0 + s * 0.15, cy - s * 0.1);
+    painter.text(
+        pos,
+        egui::Align2::LEFT_CENTER,
+        "\u{1D11E}",
+        FontId::new(font_size, FontFamily::Name("NotoMusic".into())),
+        color,
     );
-
-    // ── Top curl: loop at stem top, then descend to connect to oval top ──────
-    let curl_end = Pos2::new(sx + 0.60 * s, stem_top_y + 0.45 * s);
-    painter.add(bezier([
-        Pos2::new(sx, stem_top_y),
-        Pos2::new(sx + 0.45 * s, stem_top_y - 0.55 * s),
-        Pos2::new(sx + 0.90 * s, stem_top_y - 0.25 * s),
-        curl_end,
-    ]));
-    painter.add(bezier([
-        curl_end,
-        Pos2::new(sx + 0.25 * s, stem_top_y + 1.00 * s),
-        Pos2::new(sx + 0.10 * s, stem_top_y + 1.60 * s),
-        otop,
-    ]));
-
-    // ── Bottom hook: sweeps right then turns back up ─────────────────────────
-    painter.add(bezier([
-        Pos2::new(sx,             stem_bot_y),
-        Pos2::new(sx + 0.35 * s, stem_bot_y + 0.20 * s),
-        Pos2::new(sx + 0.70 * s, stem_bot_y + 0.05 * s),
-        Pos2::new(sx + 0.50 * s, stem_bot_y - 0.55 * s),
-    ]));
 }
 
 impl eframe::App for TrainerApp {
