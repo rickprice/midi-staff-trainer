@@ -4,6 +4,7 @@ version = "0.4.8"
 edition = "2024"
 description = "Interactive MIDI keyboard to musical staff trainer"
 license = "BSD-3-Clause"
+repository = "https://github.com/rickprice/midi-staff-trainer"
 
 [dependencies]
 eframe = "0.36"
