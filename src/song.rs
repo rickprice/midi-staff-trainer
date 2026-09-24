@@ -229,3 +229,308 @@ impl Song {
         if let Song::MidiFile(f) = self { Some(f) } else { None }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Test module is a child of song.rs so it can access private struct fields directly.
+    fn make_midi_song(notes: Vec<u8>) -> MidiFileSong {
+        MidiFileSong { filename: "test.mid".to_string(), notes, index: 0 }
+    }
+
+    // ── RandomSong ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn random_song_peek_count_respected() {
+        let song = RandomSong::new(60, 72, None);
+        assert_eq!(song.peek(3).len(), 3);
+    }
+
+    #[test]
+    fn random_song_peek_at_most_queue_size() {
+        let song = RandomSong::new(60, 72, None);
+        assert!(song.peek(1000).len() <= LOOKAHEAD);
+    }
+
+    #[test]
+    fn random_song_peek_notes_within_range() {
+        let (lo, hi) = (60u8, 72u8);
+        let song = RandomSong::new(lo, hi, None);
+        for note in song.peek(LOOKAHEAD) {
+            assert!(note.midi >= lo && note.midi <= hi);
+        }
+    }
+
+    #[test]
+    fn random_song_advance_increments_index() {
+        let mut song = RandomSong::new(60, 72, None);
+        assert_eq!(song.index, 0);
+        song.advance();
+        assert_eq!(song.index, 1);
+        song.advance();
+        assert_eq!(song.index, 2);
+    }
+
+    #[test]
+    fn random_song_advance_shifts_peek() {
+        let mut song = RandomSong::new(60, 72, None);
+        let before = song.peek(2);
+        song.advance();
+        let after = song.peek(1);
+        // First note before advance equals first note after, shifted by one.
+        assert_eq!(before[1].midi, after[0].midi);
+    }
+
+    #[test]
+    fn random_song_is_complete_infinite_never() {
+        let mut song = RandomSong::new(60, 72, None);
+        for _ in 0..50 {
+            assert!(!song.is_complete());
+            song.advance();
+        }
+    }
+
+    #[test]
+    fn random_song_is_complete_sized_after_exhaustion() {
+        let mut song = RandomSong::new(60, 72, Some(4));
+        for _ in 0..4 {
+            assert!(!song.is_complete());
+            song.advance();
+        }
+        assert!(song.is_complete());
+    }
+
+    #[test]
+    fn random_song_sized_peek_limited_by_size() {
+        let song = RandomSong::new(60, 72, Some(3));
+        assert_eq!(song.peek(100).len(), 3);
+    }
+
+    #[test]
+    fn random_song_progress_none_for_infinite() {
+        let song = RandomSong::new(60, 72, None);
+        assert!(song.progress().is_none());
+    }
+
+    #[test]
+    fn random_song_progress_some_for_sized() {
+        let mut song = RandomSong::new(60, 72, Some(5));
+        assert_eq!(song.progress(), Some((0, 5)));
+        song.advance();
+        assert_eq!(song.progress(), Some((1, 5)));
+    }
+
+    #[test]
+    fn random_song_in_range_accepts_endpoints() {
+        let song = RandomSong::new(60, 72, None);
+        assert!(song.in_range(60));
+        assert!(song.in_range(72));
+    }
+
+    #[test]
+    fn random_song_in_range_rejects_outside() {
+        let song = RandomSong::new(60, 72, None);
+        assert!(!song.in_range(59));
+        assert!(!song.in_range(73));
+    }
+
+    #[test]
+    fn random_song_restart_resets_index() {
+        let mut song = RandomSong::new(60, 72, None);
+        for _ in 0..10 {
+            song.advance();
+        }
+        song.restart();
+        assert_eq!(song.index, 0);
+    }
+
+    #[test]
+    fn random_song_restart_refills_queue() {
+        let mut song = RandomSong::new(60, 72, None);
+        for _ in 0..10 {
+            song.advance();
+        }
+        song.restart();
+        assert_eq!(song.peek(LOOKAHEAD).len(), LOOKAHEAD);
+    }
+
+    #[test]
+    fn random_song_sized_restart_allows_replay() {
+        let mut song = RandomSong::new(60, 72, Some(3));
+        for _ in 0..3 {
+            song.advance();
+        }
+        assert!(song.is_complete());
+        song.restart();
+        assert!(!song.is_complete());
+        assert_eq!(song.peek(3).len(), 3);
+    }
+
+    // ── MidiFileSong ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn midi_file_song_peek_returns_all_notes_from_start() {
+        let song = make_midi_song(vec![60, 62, 64]);
+        let midis: Vec<u8> = song.peek(3).iter().map(|n| n.midi).collect();
+        assert_eq!(midis, vec![60, 62, 64]);
+    }
+
+    #[test]
+    fn midi_file_song_peek_count_respected() {
+        let song = make_midi_song(vec![60, 62, 64, 65]);
+        assert_eq!(song.peek(2).len(), 2);
+    }
+
+    #[test]
+    fn midi_file_song_peek_beyond_length_is_safe() {
+        let song = make_midi_song(vec![60]);
+        assert_eq!(song.peek(100).len(), 1);
+    }
+
+    #[test]
+    fn midi_file_song_advance_shifts_peek() {
+        let mut song = make_midi_song(vec![60, 62, 64]);
+        song.advance();
+        let midis: Vec<u8> = song.peek(3).iter().map(|n| n.midi).collect();
+        assert_eq!(midis, vec![62, 64]);
+    }
+
+    #[test]
+    fn midi_file_song_advance_increments_progress() {
+        let mut song = make_midi_song(vec![60, 62, 64]);
+        assert_eq!(song.progress(), (0, 3));
+        song.advance();
+        assert_eq!(song.progress(), (1, 3));
+        song.advance();
+        assert_eq!(song.progress(), (2, 3));
+    }
+
+    #[test]
+    fn midi_file_song_is_complete_false_when_notes_remain() {
+        let song = make_midi_song(vec![60, 62]);
+        assert!(!song.is_complete());
+    }
+
+    #[test]
+    fn midi_file_song_is_complete_after_all_advanced() {
+        let mut song = make_midi_song(vec![60, 62]);
+        song.advance();
+        assert!(!song.is_complete());
+        song.advance();
+        assert!(song.is_complete());
+    }
+
+    #[test]
+    fn midi_file_song_advance_past_end_is_safe() {
+        let mut song = make_midi_song(vec![60]);
+        song.advance();
+        song.advance(); // should not panic
+        assert!(song.is_complete());
+    }
+
+    #[test]
+    fn midi_file_song_peek_empty_when_complete() {
+        let mut song = make_midi_song(vec![60]);
+        song.advance();
+        assert!(song.peek(5).is_empty());
+    }
+
+    #[test]
+    fn midi_file_song_restart_resets_to_start() {
+        let mut song = make_midi_song(vec![60, 62, 64]);
+        song.advance();
+        song.advance();
+        song.restart();
+        assert_eq!(song.progress(), (0, 3));
+        assert!(!song.is_complete());
+        assert_eq!(song.peek(1)[0].midi, 60);
+    }
+
+    // ── Song (unified dispatch) ───────────────────────────────────────────────────
+
+    #[test]
+    fn song_midi_file_in_range_always_true() {
+        let song = Song::MidiFile(make_midi_song(vec![60]));
+        assert!(song.in_range(0));
+        assert!(song.in_range(60));
+        assert!(song.in_range(127));
+    }
+
+    #[test]
+    fn song_random_progress_none_for_infinite() {
+        let song = Song::Random(RandomSong::new(60, 72, None));
+        assert!(song.progress().is_none());
+    }
+
+    #[test]
+    fn song_midi_file_progress_some() {
+        let song = Song::MidiFile(make_midi_song(vec![60, 62]));
+        assert_eq!(song.progress(), Some((0, 2)));
+    }
+
+    #[test]
+    fn song_peek_and_advance_consistent() {
+        let mut song = Song::MidiFile(make_midi_song(vec![60, 62, 64]));
+        assert_eq!(song.peek(1)[0].midi, 60);
+        song.advance();
+        assert_eq!(song.peek(1)[0].midi, 62);
+        song.advance();
+        assert_eq!(song.peek(1)[0].midi, 64);
+    }
+
+    #[test]
+    fn song_is_complete_random_infinite_never() {
+        let song = Song::Random(RandomSong::new(60, 72, None));
+        assert!(!song.is_complete());
+    }
+
+    #[test]
+    fn song_is_complete_midi_file_after_exhaustion() {
+        let mut song = Song::MidiFile(make_midi_song(vec![60]));
+        assert!(!song.is_complete());
+        song.advance();
+        assert!(song.is_complete());
+    }
+
+    #[test]
+    fn song_restart_allows_replay() {
+        let mut song = Song::MidiFile(make_midi_song(vec![60, 62]));
+        song.advance();
+        song.advance();
+        assert!(song.is_complete());
+        song.restart();
+        assert!(!song.is_complete());
+        assert_eq!(song.peek(1)[0].midi, 60);
+    }
+
+    #[test]
+    fn song_page_flip_scenario() {
+        // Simulates the paging logic in TrainerApp: play through a page,
+        // then peek the next page and verify continuity.
+        let mut song = Song::MidiFile(make_midi_song(vec![60, 62, 64, 65, 67]));
+        let page1: Vec<u8> = song.peek(3).iter().map(|n| n.midi).collect();
+        assert_eq!(page1, vec![60, 62, 64]);
+        // Play through the page.
+        song.advance();
+        song.advance();
+        song.advance();
+        // Next peek should start from where we left off.
+        let page2: Vec<u8> = song.peek(3).iter().map(|n| n.midi).collect();
+        assert_eq!(page2, vec![65, 67]);
+    }
+
+    #[test]
+    fn song_as_random_returns_some_for_random() {
+        let song = Song::Random(RandomSong::new(60, 72, None));
+        assert!(song.as_random().is_some());
+        assert!(song.as_midi_file().is_none());
+    }
+
+    #[test]
+    fn song_as_midi_file_returns_some_for_midi_file() {
+        let song = Song::MidiFile(make_midi_song(vec![60]));
+        assert!(song.as_midi_file().is_some());
+        assert!(song.as_random().is_none());
+    }
+}
