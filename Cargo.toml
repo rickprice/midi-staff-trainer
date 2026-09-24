@@ -8,8 +8,10 @@ license = "BSD-3-Clause"
 [dependencies]
 eframe = "0.36"
 egui = "0.36"
+midly = "0.5"
 midir = "0.10"
 rand = "0.8"
+rfd = "0.15"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 

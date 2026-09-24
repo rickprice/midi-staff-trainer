@@ -2,6 +2,7 @@ mod app;
 mod config;
 mod midi;
 mod scheduler;
+mod song;
 mod staff;
 mod state;
 
