@@ -35,7 +35,7 @@ impl Note {
     #[must_use]
     #[inline]
     pub fn octave(self) -> i32 {
-        (self.midi as i32 / 12) - 1
+        (i32::from(self.midi) / 12) - 1
     }
 
     /// Returns `true` for black-key (sharp/flat) notes.

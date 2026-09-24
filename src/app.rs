@@ -51,7 +51,7 @@ enum Feedback {
 }
 
 impl TrainerApp {
-    pub fn new(_cc: &eframe::CreationContext) -> Self {
+    pub fn new(cc: &eframe::CreationContext) -> Self {
         let mut fonts = FontDefinitions::default();
         fonts.font_data.insert(
             "NotoMusic".to_owned(),
@@ -62,11 +62,11 @@ impl TrainerApp {
             .entry(FontFamily::Name("NotoMusic".into()))
             .or_default()
             .push("NotoMusic".to_owned());
-        _cc.egui_ctx.set_fonts(fonts);
+        cc.egui_ctx.set_fonts(fonts);
 
         let config = Config::load();
         let app_state = AppState::load();
-        let (midi, midi_port_name, midi_error) = match MidiReceiver::connect(config.midi_port.as_deref(), _cc.egui_ctx.clone()) {
+        let (midi, midi_port_name, midi_error) = match MidiReceiver::connect(config.midi_port.as_deref(), cc.egui_ctx.clone()) {
             Ok(r) => {
                 let name = r.port_name.clone();
                 (Some(r), Some(name), None)
@@ -110,8 +110,7 @@ impl TrainerApp {
         self.score.attempts += 1;
         if played == self.current_note.midi {
             let latency = self.note_shown_at
-                .map(|t| t.elapsed())
-                .unwrap_or(Duration::from_secs(99));
+                .map_or(Duration::from_secs(99), |t| t.elapsed());
             self.song.record_correct(played, latency);
             self.score.correct += 1;
             self.feedback = Feedback::Correct(self.current_note);
@@ -190,6 +189,7 @@ impl TrainerApp {
         }
     }
 
+    #[allow(clippy::cast_precision_loss)] // staff positions are small integers; precision loss is harmless
     fn draw_staff(&self, painter: &Painter, rect: Rect) {
         let cx = rect.center().x;
         let cy = rect.center().y;
@@ -277,6 +277,7 @@ fn draw_treble_clef(painter: &Painter, x0: f32, cy: f32, s: f32, color: Color32)
 }
 
 impl eframe::App for TrainerApp {
+    #[allow(clippy::too_many_lines)] // egui UI methods are inherently long
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
 
@@ -311,7 +312,7 @@ impl eframe::App for TrainerApp {
             match self.mode {
                 AppMode::SettingRange(_) => self.mode = AppMode::Playing,
                 AppMode::Playing if matches!(self.song, Song::MidiFile(_)) => self.exit_to_random(),
-                _ => {}
+                AppMode::Playing => {}
             }
         }
 
@@ -321,7 +322,7 @@ impl eframe::App for TrainerApp {
             if elapsed >= delay {
                 self.advance_to_next();
             } else {
-                ctx.request_repaint_after(delay - elapsed);
+                ctx.request_repaint_after(delay.saturating_sub(elapsed));
             }
         }
 
@@ -334,8 +335,7 @@ impl eframe::App for TrainerApp {
             AppMode::Playing => None,
         };
         let current_box = self.song.as_random()
-            .map(|r| r.note_box(self.current_note.midi))
-            .unwrap_or(0);
+            .map_or(0, |r| r.note_box(self.current_note.midi));
         let box_display: Option<String> = self.song.as_random().map(|r| {
             let counts = r.box_counts();
             let box_str = counts.iter().enumerate()
@@ -375,8 +375,7 @@ impl eframe::App for TrainerApp {
                         ));
                     } else {
                         let range_str = range_info.as_ref()
-                            .map(|(s, _)| s.as_str())
-                            .unwrap_or("—");
+                            .map_or("—", |(s, _)| s.as_str());
                         ui.label(format!(
                             "Score: {}/{}{} | {range_str}",
                             self.score.correct, self.score.attempts, accuracy_str,
@@ -432,7 +431,7 @@ impl eframe::App for TrainerApp {
                 ui.add_space(12.0);
 
                 if song_is_complete {
-                    let total = self.song.progress().map(|(_, t)| t).unwrap_or(0);
+                    let total = self.song.progress().map_or(0, |(_, t)| t);
                     ui.colored_label(
                         Color32::from_rgb(50, 180, 80),
                         format!("Complete! {}/{} notes correct{}.", self.score.correct, total, accuracy_str),
@@ -480,15 +479,14 @@ impl eframe::App for TrainerApp {
                         }
                         Feedback::Correct(note) => {
                             let latency_ms = self.note_shown_at
-                                .map(|t| t.elapsed().as_millis())
-                                .unwrap_or(0);
+                                .map_or(0, |t| t.elapsed().as_millis());
                             if is_midi_file {
                                 ui.colored_label(
                                     Color32::from_rgb(50, 180, 80),
                                     format!("Correct! ({note})  {latency_ms}ms — next note…"),
                                 );
                             } else {
-                                let speed = if latency_ms <= FAST_THRESHOLD_MS as u128 { "fast" } else { "slow" };
+                                let speed = if latency_ms <= u128::from(FAST_THRESHOLD_MS) { "fast" } else { "slow" };
                                 ui.colored_label(
                                     Color32::from_rgb(50, 180, 80),
                                     format!("Correct! ({note})  {latency_ms}ms [{speed}] → Box {current_box}  — next note coming…"),
@@ -516,8 +514,7 @@ impl eframe::App for TrainerApp {
                         }
                         Feedback::OutOfRange(note) => {
                             let (lo, hi) = self.song.as_random()
-                                .map(|r| (r.active_low, r.active_high))
-                                .unwrap_or((0, 127));
+                                .map_or((0, 127), |r| (r.active_low, r.active_high));
                             ui.colored_label(
                                 Color32::from_rgb(180, 140, 50),
                                 format!("You played {note} — outside the training range ({} – {}). Expected: {}.",

@@ -37,7 +37,7 @@ impl MidiReceiver {
             .connect(
                 port,
                 "midi-staff-trainer-in",
-                move |_stamp, msg, _| {
+                move |_stamp, msg, ()| {
                     // Note-on (status 0x9n) with velocity > 0.
                     if msg.len() >= 3 && (msg[0] & 0xF0) == 0x90 && msg[2] > 0 {
                         eprintln!("MIDI note: {} / {} (velocity {})", msg[1], Note::new(msg[1]), msg[2]);
@@ -56,10 +56,7 @@ impl MidiReceiver {
     /// List the names of all currently available MIDI input ports.
     #[must_use]
     pub fn list_ports() -> Vec<String> {
-        let input = match MidiInput::new("midi-staff-trainer-list") {
-            Ok(i) => i,
-            Err(_) => return vec![],
-        };
+        let Ok(input) = MidiInput::new("midi-staff-trainer-list") else { return vec![] };
         input
             .ports()
             .iter()

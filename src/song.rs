@@ -37,7 +37,7 @@ impl RandomSong {
         self.index += 1;
         // Refill unless we have already selected `size` total notes.
         let total_selected = self.index + self.queue.len();
-        if self.size.map_or(true, |s| total_selected < s) {
+        if self.size.is_none_or(|s| total_selected < s) {
             self.queue.push_back(self.scheduler.pick_next());
         }
     }
@@ -52,6 +52,7 @@ impl RandomSong {
     }
 
     /// Up to `count` upcoming notes starting from the current position.
+    #[allow(dead_code)]
     pub fn peek(&self, count: usize) -> Vec<Note> {
         self.queue.iter().take(count).copied().collect()
     }
@@ -103,15 +104,14 @@ impl MidiFileSong {
         for track in &smf.tracks {
             let mut tick: u64 = 0;
             for event in track {
-                tick += event.delta.as_int() as u64;
+                tick += u64::from(event.delta.as_int());
                 if let midly::TrackEventKind::Midi {
                     message: midly::MidiMessage::NoteOn { key, vel },
                     ..
                 } = event.kind
+                    && vel.as_int() > 0
                 {
-                    if vel.as_int() > 0 {
-                        timed.push((tick, key.as_int()));
-                    }
+                    timed.push((tick, key.as_int()));
                 }
             }
         }
@@ -151,6 +151,7 @@ impl MidiFileSong {
     }
 
     /// Up to `count` upcoming notes starting from the current position.
+    #[allow(dead_code)]
     pub fn peek(&self, count: usize) -> Vec<Note> {
         self.notes[self.index..]
             .iter()
@@ -208,6 +209,7 @@ impl Song {
     /// Up to `count` upcoming notes from the current position.
     /// Used today to render the single current note; will drive multi-note
     /// look-ahead display when the staff renderer is extended.
+    #[allow(dead_code)]
     pub fn peek(&self, count: usize) -> Vec<Note> {
         match self {
             Song::Random(r) => r.peek(count),

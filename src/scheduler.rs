@@ -72,7 +72,7 @@ impl Scheduler {
     /// Correct answer: advance one box if fast, stay put if slow.
     pub fn record_correct(&mut self, midi: u8, latency: Duration) {
         if let Some(state) = self.states.get_mut(&midi)
-            && latency.as_millis() <= FAST_THRESHOLD_MS as u128 {
+            && latency.as_millis() <= u128::from(FAST_THRESHOLD_MS) {
             state.box_level = (state.box_level + 1).min(4);
         }
     }

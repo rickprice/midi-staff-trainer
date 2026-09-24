@@ -29,8 +29,7 @@ impl AppState {
 
 fn state_path() -> PathBuf {
     std::env::var("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("."))
+        .map_or_else(|_| PathBuf::from("."), PathBuf::from)
         .join(".cache")
         .join("midi-staff-trainer")
         .join("state.toml")

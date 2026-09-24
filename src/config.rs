@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};
 
+#[allow(clippy::struct_field_names)] // midi_ prefix is meaningful, not redundant
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     /// Lowest MIDI note number your keyboard can send (e.g. 36 = C2 for 61-key).
@@ -51,8 +52,7 @@ impl Config {
 
 fn config_path() -> PathBuf {
     std::env::var("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("."))
+        .map_or_else(|_| PathBuf::from("."), PathBuf::from)
         .join(".config")
         .join("midi-staff-trainer")
         .join("config.toml")
