@@ -28,10 +28,6 @@ impl RandomSong {
         Self { active_low: low, active_high: high, scheduler, queue, size, index: 0 }
     }
 
-    pub fn current(&self) -> Option<Note> {
-        self.queue.front().copied()
-    }
-
     pub fn advance(&mut self) {
         self.queue.pop_front();
         self.index += 1;
@@ -52,7 +48,6 @@ impl RandomSong {
     }
 
     /// Up to `count` upcoming notes starting from the current position.
-    #[allow(dead_code)]
     pub fn peek(&self, count: usize) -> Vec<Note> {
         self.queue.iter().take(count).copied().collect()
     }
@@ -132,10 +127,6 @@ impl MidiFileSong {
         Ok(Self { filename, notes, index: 0 })
     }
 
-    pub fn current(&self) -> Option<Note> {
-        self.notes.get(self.index).copied().map(Note::new)
-    }
-
     pub fn advance(&mut self) {
         if self.index < self.notes.len() {
             self.index += 1;
@@ -151,7 +142,6 @@ impl MidiFileSong {
     }
 
     /// Up to `count` upcoming notes starting from the current position.
-    #[allow(dead_code)]
     pub fn peek(&self, count: usize) -> Vec<Note> {
         self.notes[self.index..]
             .iter()
@@ -176,13 +166,6 @@ pub enum Song {
 }
 
 impl Song {
-    pub fn current(&self) -> Option<Note> {
-        match self {
-            Song::Random(r) => r.current(),
-            Song::MidiFile(f) => f.current(),
-        }
-    }
-
     pub fn advance(&mut self) {
         match self {
             Song::Random(r) => r.advance(),
@@ -207,9 +190,6 @@ impl Song {
     }
 
     /// Up to `count` upcoming notes from the current position.
-    /// Used today to render the single current note; will drive multi-note
-    /// look-ahead display when the staff renderer is extended.
-    #[allow(dead_code)]
     pub fn peek(&self, count: usize) -> Vec<Note> {
         match self {
             Song::Random(r) => r.peek(count),

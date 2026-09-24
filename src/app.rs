@@ -7,6 +7,7 @@ use crate::{
     state::AppState,
 };
 use egui::{Color32, FontData, FontDefinitions, FontFamily, FontId, Painter, Pos2, Rect, Stroke};
+use std::cmp::Ordering;
 use std::time::{Duration, Instant};
 
 const CORRECT_DISPLAY_MS: u64 = 900;
@@ -29,6 +30,9 @@ pub struct TrainerApp {
     score: Score,
     song: Song,
     mode: AppMode,
+    page: Vec<Note>,
+    page_cursor: usize,
+    page_size: usize,
 }
 
 #[derive(Default)]
@@ -76,7 +80,9 @@ impl TrainerApp {
         let active_low = app_state.training_low.unwrap_or(config.midi_low);
         let active_high = app_state.training_high.unwrap_or(config.midi_high);
         let song = Song::Random(RandomSong::new(active_low, active_high, None));
-        let current_note = song.current().unwrap_or(Note::new(60));
+        let page_size = 8;
+        let page = song.peek(page_size);
+        let current_note = page.first().copied().unwrap_or(Note::new(60));
         Self {
             config,
             app_state,
@@ -90,17 +96,31 @@ impl TrainerApp {
             score: Score::default(),
             song,
             mode: AppMode::Playing,
+            page,
+            page_cursor: 0,
+            page_size,
         }
     }
 
     fn advance_to_next(&mut self) {
         self.song.advance();
-        if let Some(note) = self.song.current() {
+        self.page_cursor += 1;
+        if self.page_cursor >= self.page.len() {
+            self.page = self.song.peek(self.page_size.max(1));
+            self.page_cursor = 0;
+        }
+        if let Some(note) = self.page.get(self.page_cursor).copied() {
             self.current_note = note;
         }
         self.feedback = Feedback::Waiting;
         self.correct_at = None;
         self.note_shown_at = Some(Instant::now());
+    }
+
+    fn reset_page(&mut self) {
+        self.page = self.song.peek(self.page_size.max(1));
+        self.page_cursor = 0;
+        self.current_note = self.page.first().copied().unwrap_or(Note::new(60));
     }
 
     fn handle_midi_note(&mut self, played: u8) {
@@ -146,7 +166,7 @@ impl TrainerApp {
         self.app_state.training_high = Some(high);
         self.app_state.save();
         self.song = Song::Random(RandomSong::new(low, high, None));
-        self.current_note = self.song.current().unwrap_or(Note::new(60));
+        self.reset_page();
         self.mode = AppMode::Playing;
         self.feedback = Feedback::Waiting;
         self.correct_at = None;
@@ -162,7 +182,7 @@ impl TrainerApp {
         let low = self.app_state.training_low.unwrap_or(self.config.midi_low);
         let high = self.app_state.training_high.unwrap_or(self.config.midi_high);
         self.song = Song::Random(RandomSong::new(low, high, None));
-        self.current_note = self.song.current().unwrap_or(Note::new(60));
+        self.reset_page();
         self.feedback = Feedback::Waiting;
         self.correct_at = None;
         self.note_shown_at = Some(Instant::now());
@@ -176,7 +196,7 @@ impl TrainerApp {
             match MidiFileSong::load(&path) {
                 Ok(f) => {
                     self.song = Song::MidiFile(f);
-                    self.current_note = self.song.current().unwrap_or(Note::new(60));
+                    self.reset_page();
                     self.score = Score::default();
                     self.feedback = Feedback::Waiting;
                     self.correct_at = None;
@@ -189,8 +209,8 @@ impl TrainerApp {
         }
     }
 
-    #[allow(clippy::cast_precision_loss)] // staff positions are small integers; precision loss is harmless
-    fn draw_staff(&self, painter: &Painter, rect: Rect) {
+    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    fn draw_staff(&self, painter: &Painter, rect: Rect) -> usize {
         let cx = rect.center().x;
         let cy = rect.center().y;
         let line_spacing = (rect.height() * 0.075).clamp(12.0, 28.0);
@@ -207,60 +227,78 @@ impl TrainerApp {
 
         draw_treble_clef(painter, x0, cy, line_spacing, staff_color);
 
-        let pos = self.current_note.staff_position();
+        // Compute how many notes fit after the treble clef.
+        let clef_width = line_spacing * 4.0;
+        let note_spacing = line_spacing * 3.0;
+        let notes_area = staff_width - clef_width;
+        let page_size = ((notes_area / note_spacing).floor() as usize).max(1);
+        let notes_start_x = x0 + clef_width + note_spacing * 0.5;
+
         let bottom_line_y = cy + 2.0 * line_spacing;
         let top_line_y = cy - 2.0 * line_spacing;
-        let note_y = bottom_line_y - (pos - 2) as f32 * (line_spacing / 2.0);
-        let note_x = cx;
         let note_r = line_spacing * 0.45;
         let ledger_hw = note_r * 2.2;
         let ledger_stroke = Stroke::new(1.5_f32, staff_color);
 
-        let mut ly = bottom_line_y + line_spacing;
-        while ly <= note_y + 0.5 {
+        for (i, note) in self.page.iter().take(page_size).enumerate() {
+            let note_x = notes_start_x + i as f32 * note_spacing;
+            let pos = note.staff_position();
+            let note_y = bottom_line_y - (pos - 2) as f32 * (line_spacing / 2.0);
+
+            let note_color = match i.cmp(&self.page_cursor) {
+                Ordering::Less => Color32::from_gray(80),
+                Ordering::Equal => match self.feedback {
+                    Feedback::Correct(_) => Color32::from_rgb(50, 180, 80),
+                    Feedback::Wrong { .. } => Color32::from_rgb(210, 60, 60),
+                    Feedback::Waiting | Feedback::OutOfRange(_) => Color32::from_gray(230),
+                },
+                Ordering::Greater => Color32::from_gray(155),
+            };
+
+            // Ledger lines below staff
+            let mut ly = bottom_line_y + line_spacing;
+            while ly <= note_y + 0.5 {
+                painter.line_segment(
+                    [Pos2::new(note_x - ledger_hw, ly), Pos2::new(note_x + ledger_hw, ly)],
+                    ledger_stroke,
+                );
+                ly += line_spacing;
+            }
+            // Ledger lines above staff
+            let mut ly = top_line_y - line_spacing;
+            while ly >= note_y - 0.5 {
+                painter.line_segment(
+                    [Pos2::new(note_x - ledger_hw, ly), Pos2::new(note_x + ledger_hw, ly)],
+                    ledger_stroke,
+                );
+                ly -= line_spacing;
+            }
+
+            if note.is_accidental() {
+                painter.text(
+                    Pos2::new(note_x - note_r * 3.5, note_y),
+                    egui::Align2::CENTER_CENTER,
+                    "♯",
+                    FontId::proportional(line_spacing * 1.3),
+                    note_color,
+                );
+            }
+
+            painter.circle_filled(Pos2::new(note_x, note_y), note_r, note_color);
+
+            let stem_up = pos <= 6;
+            let (stem_x, stem_y0, stem_y1) = if stem_up {
+                (note_x + note_r, note_y, note_y - line_spacing * 3.5)
+            } else {
+                (note_x - note_r, note_y, note_y + line_spacing * 3.5)
+            };
             painter.line_segment(
-                [Pos2::new(note_x - ledger_hw, ly), Pos2::new(note_x + ledger_hw, ly)],
-                ledger_stroke,
-            );
-            ly += line_spacing;
-        }
-        let mut ly = top_line_y - line_spacing;
-        while ly >= note_y - 0.5 {
-            painter.line_segment(
-                [Pos2::new(note_x - ledger_hw, ly), Pos2::new(note_x + ledger_hw, ly)],
-                ledger_stroke,
-            );
-            ly -= line_spacing;
-        }
-
-        let note_color = match self.feedback {
-            Feedback::Correct(_) => Color32::from_rgb(50, 180, 80),
-            Feedback::Wrong { .. } => Color32::from_rgb(210, 60, 60),
-            Feedback::Waiting | Feedback::OutOfRange(_) => Color32::from_gray(230),
-        };
-
-        if self.current_note.is_accidental() {
-            painter.text(
-                Pos2::new(note_x - note_r * 3.5, note_y),
-                egui::Align2::CENTER_CENTER,
-                "♯",
-                FontId::proportional(line_spacing * 1.3),
-                note_color,
+                [Pos2::new(stem_x, stem_y0), Pos2::new(stem_x, stem_y1)],
+                Stroke::new(1.5_f32, note_color),
             );
         }
 
-        painter.circle_filled(Pos2::new(note_x, note_y), note_r, note_color);
-
-        let stem_up = pos <= 6;
-        let (stem_x, stem_y0, stem_y1) = if stem_up {
-            (note_x + note_r, note_y, note_y - line_spacing * 3.5)
-        } else {
-            (note_x - note_r, note_y, note_y + line_spacing * 3.5)
-        };
-        painter.line_segment(
-            [Pos2::new(stem_x, stem_y0), Pos2::new(stem_x, stem_y1)],
-            Stroke::new(1.5_f32, note_color),
-        );
+        page_size
     }
 }
 
@@ -439,7 +477,7 @@ impl eframe::App for TrainerApp {
                     ui.horizontal(|ui| {
                         if ui.button("Restart").clicked() {
                             self.song.restart();
-                            self.current_note = self.song.current().unwrap_or(Note::new(60));
+                            self.reset_page();
                             self.score = Score::default();
                             self.feedback = Feedback::Waiting;
                             self.correct_at = None;
@@ -532,7 +570,13 @@ impl eframe::App for TrainerApp {
 
         egui::CentralPanel::default().show(ui, |ui| {
             let rect = ui.available_rect_before_wrap();
-            self.draw_staff(ui.painter(), rect);
+            let new_page_size = self.draw_staff(ui.painter(), rect);
+            if new_page_size != self.page_size {
+                self.page_size = new_page_size;
+                self.page = self.song.peek(self.page_size);
+                self.page_cursor = 0;
+                self.current_note = self.page.first().copied().unwrap_or(self.current_note);
+            }
         });
     }
 }
