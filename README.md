@@ -8,12 +8,14 @@ A desktop app for learning the connection between keys on a MIDI keyboard and no
 - Ledger lines above and below the staff as needed
 - Connects to any ALSA MIDI input device (USB or hardware MIDI)
 - Note range is configurable to match non-full-sized keyboards
-- Score tracking (correct / total attempts)
+- Score tracking (correct / total attempts, accuracy %)
 - Note name displayed at the bottom of the screen as a reference hint (not next to the note, to encourage reading staff position)
 - Correct answers flash green and auto-advance after ~1 second
 - Wrong answers flash red and prompt you to try again
 - Notes played outside the active training range are identified by name without counting as an attempt
 - Training range is remembered across sessions (stored in `~/.cache/midi-staff-trainer/state.toml`)
+- Leitner spaced-repetition scheduler: 5 box levels with weighted random draws (box 0 weight 10×, box 4 weight 0.5×) so weaker notes appear more often
+- Response latency tracking: answers within 1500 ms count as "fast" and advance the note to the next box; slower correct answers stay in the current box; wrong answers reset the note to box 0
 
 ## Requirements
 
@@ -84,6 +86,7 @@ Common keyboard ranges:
 | File | Responsibility |
 |------|---------------|
 | `src/staff.rs` | `Note` type — letter names, octaves, staff positions, random picker |
+| `src/scheduler.rs` | Leitner spaced-repetition scheduler — box levels, weighted draws, latency tracking |
 | `src/config.rs` | TOML config — load / save / defaults (`~/.config/…/config.toml`) |
 | `src/state.rs` | Runtime state — training range persisted across sessions (`~/.cache/…/state.toml`) |
 | `src/midi.rs` | ALSA MIDI input connection and port listing |
