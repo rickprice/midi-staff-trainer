@@ -248,7 +248,8 @@ fn draw_treble_clef(painter: &Painter, x0: f32, cy: f32, s: f32, color: Color32)
 }
 
 impl eframe::App for TrainerApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
         // Drain the MIDI channel into a local buffer before borrowing self mutably.
         let midi_notes: Vec<u8> = self
             .midi
@@ -300,7 +301,7 @@ impl eframe::App for TrainerApp {
         let range_changed = self.active_low != self.config.midi_low
             || self.active_high != self.config.midi_high;
 
-        egui::TopBottomPanel::top("header").show(ctx, |ui| {
+        egui::Panel::top("header").show(ui, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(8.0);
                 ui.heading("MIDI Staff Trainer");
@@ -368,7 +369,7 @@ impl eframe::App for TrainerApp {
             });
         });
 
-        egui::TopBottomPanel::bottom("feedback").show(ctx, |ui| {
+        egui::Panel::bottom("feedback").show(ui, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(12.0);
                 if let Some((count, first_key)) = mode_state {
@@ -438,7 +439,7 @@ impl eframe::App for TrainerApp {
             });
         });
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             let rect = ui.available_rect_before_wrap();
             self.draw_staff(ui.painter(), rect);
         });
