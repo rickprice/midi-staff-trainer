@@ -1,8 +1,8 @@
 use crate::{
     config::Config,
     midi::MidiReceiver,
-    scheduler::{Scheduler, BOX_WEIGHTS, FAST_THRESHOLD_MS},
-    song::SongPlayer,
+    scheduler::{BOX_WEIGHTS, FAST_THRESHOLD_MS},
+    song::{MidiFileSong, RandomSong, Song},
     staff::Note,
     state::AppState,
 };
@@ -12,9 +12,8 @@ use std::time::{Duration, Instant};
 const CORRECT_DISPLAY_MS: u64 = 900;
 
 enum AppMode {
-    Training,
+    Playing,
     SettingRange(Vec<u8>),
-    Song(SongPlayer),
 }
 
 pub struct TrainerApp {
@@ -28,9 +27,7 @@ pub struct TrainerApp {
     correct_at: Option<Instant>,
     note_shown_at: Option<Instant>,
     score: Score,
-    scheduler: Scheduler,
-    active_low: u8,
-    active_high: u8,
+    song: Song,
     mode: AppMode,
 }
 
@@ -78,8 +75,8 @@ impl TrainerApp {
         };
         let active_low = app_state.training_low.unwrap_or(config.midi_low);
         let active_high = app_state.training_high.unwrap_or(config.midi_high);
-        let mut scheduler = Scheduler::new(active_low, active_high);
-        let current_note = scheduler.pick_next();
+        let song = Song::Random(RandomSong::new(active_low, active_high, None));
+        let current_note = song.current().unwrap_or(Note::new(60));
         Self {
             config,
             app_state,
@@ -91,23 +88,14 @@ impl TrainerApp {
             correct_at: None,
             note_shown_at: Some(Instant::now()),
             score: Score::default(),
-            scheduler,
-            active_low,
-            active_high,
-            mode: AppMode::Training,
+            song,
+            mode: AppMode::Playing,
         }
     }
 
-    /// Advance to the next note — random in Training mode, sequential in Song mode.
     fn advance_to_next(&mut self) {
-        let next = match &mut self.mode {
-            AppMode::Song(player) => {
-                player.advance();
-                player.current()
-            }
-            _ => Some(self.scheduler.pick_next()),
-        };
-        if let Some(note) = next {
+        self.song.advance();
+        if let Some(note) = self.song.current() {
             self.current_note = note;
         }
         self.feedback = Feedback::Waiting;
@@ -119,22 +107,17 @@ impl TrainerApp {
         if matches!(self.feedback, Feedback::Correct(_)) {
             return;
         }
-        let is_training = matches!(self.mode, AppMode::Training);
         self.score.attempts += 1;
         if played == self.current_note.midi {
             let latency = self.note_shown_at
                 .map(|t| t.elapsed())
                 .unwrap_or(Duration::from_secs(99));
-            if is_training {
-                self.scheduler.record_correct(played, latency);
-            }
+            self.song.record_correct(played, latency);
             self.score.correct += 1;
             self.feedback = Feedback::Correct(self.current_note);
             self.correct_at = Some(Instant::now());
         } else {
-            if is_training {
-                self.scheduler.record_incorrect(self.current_note.midi);
-            }
+            self.song.record_incorrect(self.current_note.midi);
             self.feedback = Feedback::Wrong {
                 expected: self.current_note,
                 got: Note::new(played),
@@ -160,14 +143,15 @@ impl TrainerApp {
     }
 
     fn set_active_range(&mut self, low: u8, high: u8) {
-        self.active_low = low;
-        self.active_high = high;
         self.app_state.training_low = Some(low);
         self.app_state.training_high = Some(high);
         self.app_state.save();
-        self.scheduler = Scheduler::new(low, high);
-        self.mode = AppMode::Training;
-        self.advance_to_next();
+        self.song = Song::Random(RandomSong::new(low, high, None));
+        self.current_note = self.song.current().unwrap_or(Note::new(60));
+        self.mode = AppMode::Playing;
+        self.feedback = Feedback::Waiting;
+        self.correct_at = None;
+        self.note_shown_at = Some(Instant::now());
     }
 
     fn reset_range(&mut self) {
@@ -175,20 +159,30 @@ impl TrainerApp {
         self.set_active_range(low, high);
     }
 
+    fn exit_to_random(&mut self) {
+        let low = self.app_state.training_low.unwrap_or(self.config.midi_low);
+        let high = self.app_state.training_high.unwrap_or(self.config.midi_high);
+        self.song = Song::Random(RandomSong::new(low, high, None));
+        self.current_note = self.song.current().unwrap_or(Note::new(60));
+        self.feedback = Feedback::Waiting;
+        self.correct_at = None;
+        self.note_shown_at = Some(Instant::now());
+    }
+
     fn load_midi_file(&mut self) {
         let picked = rfd::FileDialog::new()
             .add_filter("MIDI files", &["mid", "midi"])
             .pick_file();
         if let Some(path) = picked {
-            match SongPlayer::load(&path) {
-                Ok(mut player) => {
-                    self.current_note = player.current().unwrap_or(Note::new(60));
-                    player.index = 0; // already 0, but be explicit
-                    self.mode = AppMode::Song(player);
+            match MidiFileSong::load(&path) {
+                Ok(f) => {
+                    self.song = Song::MidiFile(f);
+                    self.current_note = self.song.current().unwrap_or(Note::new(60));
                     self.score = Score::default();
                     self.feedback = Feedback::Waiting;
                     self.correct_at = None;
                     self.note_shown_at = Some(Instant::now());
+                    self.mode = AppMode::Playing;
                     self.midi_error = None;
                 }
                 Err(e) => self.midi_error = Some(e),
@@ -245,7 +239,6 @@ impl TrainerApp {
             Feedback::Waiting | Feedback::OutOfRange(_) => Color32::from_gray(230),
         };
 
-        // Sharp symbol to the left of the note head for accidentals.
         if self.current_note.is_accidental() {
             painter.text(
                 Pos2::new(note_x - note_r * 3.5, note_y),
@@ -294,16 +287,11 @@ impl eframe::App for TrainerApp {
             .unwrap_or_default();
 
         let is_setting_range = matches!(self.mode, AppMode::SettingRange(_));
-        let is_song_mode = matches!(self.mode, AppMode::Song(_));
 
         for note in midi_notes {
             if is_setting_range {
                 self.handle_range_key(note);
-            } else if is_song_mode {
-                // In song mode any key is checked against the current song note;
-                // there is no range restriction.
-                self.handle_midi_note(note);
-            } else if (self.active_low..=self.active_high).contains(&note) {
+            } else if self.song.in_range(note) {
                 self.handle_midi_note(note);
             } else {
                 self.feedback = Feedback::OutOfRange(Note::new(note));
@@ -314,22 +302,16 @@ impl eframe::App for TrainerApp {
             i.key_pressed(egui::Key::R),
             i.key_pressed(egui::Key::Escape),
         ));
-        if r_pressed && matches!(self.mode, AppMode::Training) {
+        if r_pressed && matches!(self.mode, AppMode::Playing) && self.song.as_random().is_some() {
             self.mode = AppMode::SettingRange(Vec::new());
             self.correct_at = None;
             self.feedback = Feedback::Waiting;
         }
         if esc_pressed {
-            match &self.mode {
-                AppMode::SettingRange(_) => self.mode = AppMode::Training,
-                AppMode::Song(_) => {
-                    self.mode = AppMode::Training;
-                    self.current_note = self.scheduler.pick_next();
-                    self.feedback = Feedback::Waiting;
-                    self.correct_at = None;
-                    self.note_shown_at = Some(Instant::now());
-                }
-                AppMode::Training => {}
+            match self.mode {
+                AppMode::SettingRange(_) => self.mode = AppMode::Playing,
+                AppMode::Playing if matches!(self.song, Song::MidiFile(_)) => self.exit_to_random(),
+                _ => {}
             }
         }
 
@@ -337,33 +319,46 @@ impl eframe::App for TrainerApp {
             let elapsed = t.elapsed();
             let delay = Duration::from_millis(CORRECT_DISPLAY_MS);
             if elapsed >= delay {
-                let song_done = matches!(&self.mode, AppMode::Song(p) if p.is_complete());
-                if !song_done {
-                    self.advance_to_next();
-                } else {
-                    self.correct_at = None;
-                }
+                self.advance_to_next();
             } else {
                 ctx.request_repaint_after(delay - elapsed);
             }
         }
 
-        // Snapshot read-only fields before UI drawing (avoids re-borrows).
+        // Snapshot fields for UI drawing (avoids re-borrows inside closures).
         let accuracy_str = self.score.accuracy_pct()
             .map(|p| format!(" ({p}%)"))
             .unwrap_or_default();
-        let box_counts = self.scheduler.box_counts();
-        let current_box = self.scheduler.note_box(self.current_note.midi);
         let mode_state: Option<(usize, Option<u8>)> = match &self.mode {
             AppMode::SettingRange(keys) => Some((keys.len(), keys.first().copied())),
-            _ => None,
+            AppMode::Playing => None,
         };
-        let range_changed = self.active_low != self.config.midi_low
-            || self.active_high != self.config.midi_high;
-        let song_info: Option<(String, usize, usize, bool)> = match &self.mode {
-            AppMode::Song(p) => Some((p.filename.clone(), p.index, p.total(), p.is_complete())),
-            _ => None,
-        };
+        let current_box = self.song.as_random()
+            .map(|r| r.note_box(self.current_note.midi))
+            .unwrap_or(0);
+        let box_display: Option<String> = self.song.as_random().map(|r| {
+            let counts = r.box_counts();
+            let box_str = counts.iter().enumerate()
+                .map(|(i, &n)| format!("{i}:{n}"))
+                .collect::<Vec<_>>()
+                .join("  ");
+            format!(
+                "Boxes (weight {:.0}/{:.0}/{:.0}/{:.1}/{:.1}) → {box_str}",
+                BOX_WEIGHTS[0], BOX_WEIGHTS[1], BOX_WEIGHTS[2],
+                BOX_WEIGHTS[3], BOX_WEIGHTS[4],
+            )
+        });
+        let range_info: Option<(String, bool)> = self.song.as_random().map(|r| {
+            let label = format!("Range: {} – {}", Note::new(r.active_low), Note::new(r.active_high));
+            let changed = r.active_low != self.config.midi_low
+                || r.active_high != self.config.midi_high;
+            (label, changed)
+        });
+        let midi_file_info: Option<(String, usize, usize, bool)> = self.song.as_midi_file().map(|f| {
+            let (idx, total) = f.progress();
+            (f.filename.clone(), idx, total, f.is_complete())
+        });
+        let song_is_complete = self.song.is_complete();
 
         egui::Panel::top("header").show(ui, |ui| {
             ui.vertical_centered(|ui| {
@@ -372,24 +367,19 @@ impl eframe::App for TrainerApp {
                 ui.add_space(4.0);
 
                 ui.horizontal(|ui| {
-                    if let Some((ref filename, idx, total, _)) = song_info {
+                    if let Some((ref filename, idx, total, _)) = midi_file_info {
                         ui.label(format!(
                             "Score: {}/{}{} | Song: {} | Note {}/{}",
-                            self.score.correct,
-                            self.score.attempts,
-                            accuracy_str,
-                            filename,
-                            idx,
-                            total,
+                            self.score.correct, self.score.attempts, accuracy_str,
+                            filename, idx, total,
                         ));
                     } else {
+                        let range_str = range_info.as_ref()
+                            .map(|(s, _)| s.as_str())
+                            .unwrap_or("—");
                         ui.label(format!(
-                            "Score: {}/{}{} | Range: {} – {}",
-                            self.score.correct,
-                            self.score.attempts,
-                            accuracy_str,
-                            Note::new(self.active_low),
-                            Note::new(self.active_high),
+                            "Score: {}/{}{} | {range_str}",
+                            self.score.correct, self.score.attempts, accuracy_str,
                         ));
                         if mode_state.is_none() {
                             if ui.small_button("Set Range [R]").clicked() {
@@ -397,7 +387,9 @@ impl eframe::App for TrainerApp {
                                 self.correct_at = None;
                                 self.feedback = Feedback::Waiting;
                             }
-                            if range_changed && ui.small_button("Reset").clicked() {
+                            if range_info.as_ref().is_some_and(|(_, changed)| *changed)
+                                && ui.small_button("Reset").clicked()
+                            {
                                 self.reset_range();
                             }
                         }
@@ -405,34 +397,17 @@ impl eframe::App for TrainerApp {
                     if ui.small_button("Load MIDI").clicked() {
                         self.load_midi_file();
                     }
-                    if song_info.is_some() && ui.small_button("Exit Song [Esc]").clicked() {
-                        self.mode = AppMode::Training;
-                        self.current_note = self.scheduler.pick_next();
-                        self.feedback = Feedback::Waiting;
-                        self.correct_at = None;
-                        self.note_shown_at = Some(Instant::now());
+                    if midi_file_info.is_some() && ui.small_button("Exit Song [Esc]").clicked() {
+                        self.exit_to_random();
                     }
                 });
 
-                if song_info.is_none() {
-                    let box_str = box_counts
-                        .iter()
-                        .enumerate()
-                        .map(|(i, &n)| format!("{i}:{n}"))
-                        .collect::<Vec<_>>()
-                        .join("  ");
-                    ui.label(format!(
-                        "Boxes (weight {:.0}/{:.0}/{:.0}/{:.1}/{:.1}) → {box_str}",
-                        BOX_WEIGHTS[0], BOX_WEIGHTS[1], BOX_WEIGHTS[2],
-                        BOX_WEIGHTS[3], BOX_WEIGHTS[4],
-                    ));
+                if let Some(ref s) = box_display {
+                    ui.label(s);
                 }
 
                 if let Some(ref name) = self.midi_port_name {
-                    ui.colored_label(
-                        Color32::from_rgb(50, 180, 80),
-                        format!("Connected: {name}"),
-                    );
+                    ui.colored_label(Color32::from_rgb(50, 180, 80), format!("Connected: {name}"));
                 }
                 ui.add_space(8.0);
 
@@ -456,85 +431,45 @@ impl eframe::App for TrainerApp {
             ui.vertical_centered(|ui| {
                 ui.add_space(12.0);
 
-                if let Some((_, idx, total, complete)) = song_info {
-                    if complete {
-                        ui.colored_label(
-                            Color32::from_rgb(50, 180, 80),
-                            format!("Song complete! {}/{} notes correct{}.", self.score.correct, total, accuracy_str),
-                        );
-                        ui.horizontal(|ui| {
-                            if ui.button("Restart Song").clicked() {
-                                if let AppMode::Song(ref mut player) = self.mode {
-                                    player.restart();
-                                    self.current_note = player.current().unwrap_or(Note::new(60));
-                                }
-                                self.score = Score::default();
-                                self.feedback = Feedback::Waiting;
-                                self.correct_at = None;
-                                self.note_shown_at = Some(Instant::now());
-                            }
-                            if ui.button("Load New Song").clicked() {
-                                self.load_midi_file();
-                            }
-                        });
-                    } else {
-                        match self.feedback {
-                            Feedback::Waiting => {
-                                ui.label(format!(
-                                    "Note {}/{} — play the note shown on the staff.",
-                                    idx + 1,
-                                    total,
-                                ));
-                                ui.colored_label(
-                                    Color32::from_rgb(212, 175, 55),
-                                    format!("Note: {}", self.current_note),
-                                );
-                                if ui.button("Skip").clicked() {
-                                    self.advance_to_next();
-                                }
-                            }
-                            Feedback::Correct(note) => {
-                                let latency_ms = self.note_shown_at
-                                    .map(|t| t.elapsed().as_millis())
-                                    .unwrap_or(0);
-                                ui.colored_label(
-                                    Color32::from_rgb(50, 180, 80),
-                                    format!("Correct! ({note})  {latency_ms}ms — next note…"),
-                                );
-                                if ui.button("Next now").clicked() {
-                                    self.advance_to_next();
-                                }
-                            }
-                            Feedback::Wrong { expected, got } => {
-                                ui.colored_label(
-                                    Color32::from_rgb(210, 60, 60),
-                                    format!("Wrong — expected {expected}, got {got}. Try again."),
-                                );
-                                if ui.button("Skip").clicked() {
-                                    self.advance_to_next();
-                                }
-                            }
-                            Feedback::OutOfRange(_) => {}
+                if song_is_complete {
+                    let total = self.song.progress().map(|(_, t)| t).unwrap_or(0);
+                    ui.colored_label(
+                        Color32::from_rgb(50, 180, 80),
+                        format!("Complete! {}/{} notes correct{}.", self.score.correct, total, accuracy_str),
+                    );
+                    ui.horizontal(|ui| {
+                        if ui.button("Restart").clicked() {
+                            self.song.restart();
+                            self.current_note = self.song.current().unwrap_or(Note::new(60));
+                            self.score = Score::default();
+                            self.feedback = Feedback::Waiting;
+                            self.correct_at = None;
+                            self.note_shown_at = Some(Instant::now());
                         }
-                    }
+                        if midi_file_info.is_some() && ui.button("Load New Song").clicked() {
+                            self.load_midi_file();
+                        }
+                    });
                 } else if let Some((count, first_key)) = mode_state {
                     if count == 0 {
-                        ui.label("Press any 2 MIDI keys to define the training range — order doesn't matter.");
+                        ui.label("Press any 2 MIDI keys to set the training range — order doesn't matter.");
                     } else if let Some(k) = first_key {
-                        ui.label(format!(
-                            "Got {} — press one more key to complete the range.",
-                            Note::new(k),
-                        ));
+                        ui.label(format!("Got {} — press one more key to complete the range.", Note::new(k)));
                     }
                     if ui.button("Cancel [Esc]").clicked() {
-                        self.mode = AppMode::Training;
+                        self.mode = AppMode::Playing;
                     }
                 } else {
+                    let is_midi_file = midi_file_info.is_some();
                     match self.feedback {
                         Feedback::Waiting => {
-                            ui.label(format!(
-                                "Play the note shown on the staff.  [Box {current_box}  |  fast threshold: {FAST_THRESHOLD_MS}ms]"
-                            ));
+                            if let Some((idx, total)) = self.song.progress() {
+                                ui.label(format!("Note {}/{} — play the note shown on the staff.", idx + 1, total));
+                            } else {
+                                ui.label(format!(
+                                    "Play the note shown on the staff.  [Box {current_box}  |  fast threshold: {FAST_THRESHOLD_MS}ms]"
+                                ));
+                            }
                             ui.colored_label(
                                 Color32::from_rgb(212, 175, 55),
                                 format!("Note: {}", self.current_note),
@@ -547,32 +482,46 @@ impl eframe::App for TrainerApp {
                             let latency_ms = self.note_shown_at
                                 .map(|t| t.elapsed().as_millis())
                                 .unwrap_or(0);
-                            let speed = if latency_ms <= FAST_THRESHOLD_MS as u128 { "fast" } else { "slow" };
-                            ui.colored_label(
-                                Color32::from_rgb(50, 180, 80),
-                                format!("Correct! ({note})  {latency_ms}ms [{speed}] → Box {current_box}  — next note coming…"),
-                            );
+                            if is_midi_file {
+                                ui.colored_label(
+                                    Color32::from_rgb(50, 180, 80),
+                                    format!("Correct! ({note})  {latency_ms}ms — next note…"),
+                                );
+                            } else {
+                                let speed = if latency_ms <= FAST_THRESHOLD_MS as u128 { "fast" } else { "slow" };
+                                ui.colored_label(
+                                    Color32::from_rgb(50, 180, 80),
+                                    format!("Correct! ({note})  {latency_ms}ms [{speed}] → Box {current_box}  — next note coming…"),
+                                );
+                            }
                             if ui.button("Next now").clicked() {
                                 self.advance_to_next();
                             }
                         }
                         Feedback::Wrong { expected, got } => {
-                            ui.colored_label(
-                                Color32::from_rgb(210, 60, 60),
-                                format!("Wrong — expected {expected}, got {got}. Try again.  [Box {current_box}]"),
-                            );
+                            if is_midi_file {
+                                ui.colored_label(
+                                    Color32::from_rgb(210, 60, 60),
+                                    format!("Wrong — expected {expected}, got {got}. Try again."),
+                                );
+                            } else {
+                                ui.colored_label(
+                                    Color32::from_rgb(210, 60, 60),
+                                    format!("Wrong — expected {expected}, got {got}. Try again.  [Box {current_box}]"),
+                                );
+                            }
                             if ui.button("Skip").clicked() {
                                 self.advance_to_next();
                             }
                         }
                         Feedback::OutOfRange(note) => {
+                            let (lo, hi) = self.song.as_random()
+                                .map(|r| (r.active_low, r.active_high))
+                                .unwrap_or((0, 127));
                             ui.colored_label(
                                 Color32::from_rgb(180, 140, 50),
                                 format!("You played {note} — outside the training range ({} – {}). Expected: {}.",
-                                    Note::new(self.active_low),
-                                    Note::new(self.active_high),
-                                    self.current_note,
-                                ),
+                                    Note::new(lo), Note::new(hi), self.current_note),
                             );
                             if ui.button("Skip").clicked() {
                                 self.advance_to_next();

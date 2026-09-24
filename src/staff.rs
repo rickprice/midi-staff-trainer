@@ -288,12 +288,12 @@ mod tests {
 
     #[test]
     fn natural_notes_single_accidental_is_empty() {
-        assert_eq!(natural_notes_in_range(61, 61), []);
+        assert_eq!(natural_notes_in_range(61, 61), Vec::<u8>::new());
     }
 
     #[test]
     fn natural_notes_inverted_range_is_empty() {
-        assert_eq!(natural_notes_in_range(72, 60), []);
+        assert_eq!(natural_notes_in_range(72, 60), Vec::<u8>::new());
     }
 
     #[test]
@@ -362,7 +362,7 @@ mod tests {
     #[test]
     fn accidental_at_midi_one() {
         assert!(Note::new(1).is_accidental()); // C#-1
-        assert_eq!(natural_notes_in_range(1, 1), []);
+        assert_eq!(natural_notes_in_range(1, 1), Vec::<u8>::new());
     }
 
 }
