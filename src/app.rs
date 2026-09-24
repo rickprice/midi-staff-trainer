@@ -33,6 +33,7 @@ pub struct TrainerApp {
     page: Vec<Note>,
     page_cursor: usize,
     page_size: usize,
+    beat_cursor: f32,
 }
 
 #[derive(Default)]
@@ -99,10 +100,12 @@ impl TrainerApp {
             page,
             page_cursor: 0,
             page_size,
+            beat_cursor: 0.0,
         }
     }
 
     fn advance_to_next(&mut self) {
+        self.beat_cursor += self.page.get(self.page_cursor).map_or(1.0, |n| n.beats);
         self.song.advance();
         self.page_cursor += 1;
         if self.page_cursor >= self.page.len() {
@@ -120,6 +123,7 @@ impl TrainerApp {
     fn reset_page(&mut self) {
         self.page = self.song.peek(self.page_size.max(1));
         self.page_cursor = 0;
+        self.beat_cursor = 0.0;
         self.current_note = self.page.first().copied().unwrap_or(Note::new(60));
     }
 
@@ -211,7 +215,7 @@ impl TrainerApp {
         }
     }
 
-    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::too_many_lines)]
     fn draw_staff(&self, painter: &Painter, rect: Rect) -> usize {
         let cx = rect.center().x;
         let cy = rect.center().y;
@@ -255,18 +259,27 @@ impl TrainerApp {
             );
         }
 
-        // Measure bar lines: between notes wherever the global beat index crosses a boundary.
-        let page_start = self.song.note_index().saturating_sub(self.page_cursor);
+        // Measure bar lines: placed by cumulative beats rather than note count.
+        let played_page_beats: f32 = self.page[..self.page_cursor].iter().map(|n| n.beats).sum();
+        let page_start_beat = self.beat_cursor - played_page_beats;
+        let beats_f = f32::from(beats);
         let visible = self.page.len().min(page_size);
-        for i in 1..visible {
-            if (page_start + i).is_multiple_of(usize::from(beats)) {
-                let bar_x = notes_start_x + (i as f32 - 0.5) * note_spacing;
-                painter.line_segment(
-                    [Pos2::new(bar_x, top_line_y), Pos2::new(bar_x, bottom_line_y)],
-                    staff_stroke,
-                );
+        let mut running_beats = page_start_beat;
+        for i in 0..visible {
+            if i > 0 {
+                let curr_measure = (running_beats / beats_f).floor() as i32;
+                let prev_measure = ((running_beats - self.page[i - 1].beats) / beats_f).floor() as i32;
+                if curr_measure > prev_measure {
+                    let bar_x = notes_start_x + (i as f32 - 0.5) * note_spacing;
+                    painter.line_segment(
+                        [Pos2::new(bar_x, top_line_y), Pos2::new(bar_x, bottom_line_y)],
+                        staff_stroke,
+                    );
+                }
             }
+            running_beats += self.page[i].beats;
         }
+
         let note_r = line_spacing * 0.45;
         let ledger_hw = note_r * 2.2;
         let ledger_stroke = Stroke::new(1.5_f32, staff_color);
@@ -315,18 +328,47 @@ impl TrainerApp {
                 );
             }
 
-            painter.circle_filled(Pos2::new(note_x, note_y), note_r, note_color);
-
-            let stem_up = pos <= 6;
-            let (stem_x, stem_y0, stem_y1) = if stem_up {
-                (note_x + note_r, note_y, note_y - line_spacing * 3.5)
+            // Note head — open (hollow) for whole/half notes, filled for quarter and shorter.
+            let open_head = note.beats >= 2.0;
+            if open_head {
+                let r = if note.beats >= 4.0 { note_r * 1.15 } else { note_r };
+                painter.circle_stroke(Pos2::new(note_x, note_y), r, Stroke::new(2.0_f32, note_color));
             } else {
-                (note_x - note_r, note_y, note_y + line_spacing * 3.5)
-            };
-            painter.line_segment(
-                [Pos2::new(stem_x, stem_y0), Pos2::new(stem_x, stem_y1)],
-                Stroke::new(1.5_f32, note_color),
-            );
+                painter.circle_filled(Pos2::new(note_x, note_y), note_r, note_color);
+            }
+
+            // Stem — whole notes have none.
+            if note.beats < 4.0 {
+                let stem_up = pos <= 6;
+                let (stem_x, stem_y0, stem_y1) = if stem_up {
+                    (note_x + note_r, note_y, note_y - line_spacing * 3.5)
+                } else {
+                    (note_x - note_r, note_y, note_y + line_spacing * 3.5)
+                };
+                painter.line_segment(
+                    [Pos2::new(stem_x, stem_y0), Pos2::new(stem_x, stem_y1)],
+                    Stroke::new(1.5_f32, note_color),
+                );
+
+                // Flags — eighth note gets one, sixteenth gets two.
+                if note.beats <= 0.5 {
+                    let num_flags: i32 = if note.beats <= 0.25 { 2 } else { 1 };
+                    let flag_stroke = Stroke::new(1.5_f32, note_color);
+                    for f in 0..num_flags {
+                        let (fy0, fy1) = if stem_up {
+                            let base = stem_y1 + f as f32 * line_spacing * 0.7;
+                            (base, base + line_spacing * 1.4)
+                        } else {
+                            let base = stem_y1 - f as f32 * line_spacing * 0.7;
+                            (base, base - line_spacing * 1.4)
+                        };
+                        painter.line_segment(
+                            [Pos2::new(stem_x, fy0), Pos2::new(stem_x + note_r * 3.0, fy1)],
+                            flag_stroke,
+                        );
+                    }
+                }
+            }
         }
 
         page_size

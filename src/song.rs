@@ -1,8 +1,18 @@
 use crate::scheduler::Scheduler;
 use crate::staff::Note;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use std::time::Duration;
+
+/// Snap a raw beat duration to the nearest standard note value.
+fn quantize_beats(raw: f32) -> f32 {
+    const VALUES: [f32; 5] = [4.0, 2.0, 1.0, 0.5, 0.25];
+    VALUES
+        .iter()
+        .copied()
+        .min_by(|&a, &b| (a - raw).abs().partial_cmp(&(b - raw).abs()).unwrap_or(std::cmp::Ordering::Equal))
+        .unwrap_or(1.0)
+}
 
 const LOOKAHEAD: usize = 16;
 
@@ -88,7 +98,7 @@ impl RandomSong {
 
 pub struct MidiFileSong {
     pub filename: String,
-    notes: Vec<u8>,
+    notes: Vec<(u8, f32)>, // (midi, beats)
     pub index: usize,
     pub beats_per_measure: u8,
     pub beat_unit: u8,
@@ -98,6 +108,12 @@ impl MidiFileSong {
     pub fn load(path: &Path) -> Result<Self, String> {
         let data = std::fs::read(path).map_err(|e| format!("Cannot read file: {e}"))?;
         let smf = midly::Smf::parse(&data).map_err(|e| format!("Invalid MIDI file: {e}"))?;
+
+        // Ticks-per-beat from header (used to convert tick durations to beats).
+        let ticks_per_beat = match smf.header.timing {
+            midly::Timing::Metrical(tpb) => f32::from(tpb.as_int()),
+            midly::Timing::Timecode(_, _) => 480.0,
+        };
 
         // Extract time signature from the first meta event that declares one.
         let mut beats_per_measure = 4u8;
@@ -114,19 +130,43 @@ impl MidiFileSong {
             }
         }
 
-        let mut timed: Vec<(u64, u8)> = Vec::new();
+        // Extract notes with durations. For each NoteOn, find its matching NoteOff
+        // (or NoteOn with vel=0) to compute the tick duration, then quantize to beats.
+        let mut timed: Vec<(u64, u8, f32)> = Vec::new(); // (on_tick, midi, beats)
         for track in &smf.tracks {
             let mut tick: u64 = 0;
+            let mut active: HashMap<u8, u64> = HashMap::new(); // key → on_tick
             for event in track {
                 tick += u64::from(event.delta.as_int());
-                if let midly::TrackEventKind::Midi {
-                    message: midly::MidiMessage::NoteOn { key, vel },
-                    ..
-                } = event.kind
-                    && vel.as_int() > 0
-                {
-                    timed.push((tick, key.as_int()));
+                match event.kind {
+                    midly::TrackEventKind::Midi {
+                        message: midly::MidiMessage::NoteOn { key, vel }, ..
+                    } => {
+                        let k = key.as_int();
+                        if vel.as_int() > 0 {
+                            active.insert(k, tick);
+                        } else if let Some(on_tick) = active.remove(&k) {
+                            #[allow(clippy::cast_precision_loss)]
+                        let beats = quantize_beats((tick - on_tick) as f32 / ticks_per_beat);
+                            timed.push((on_tick, k, beats));
+                        }
+                    }
+                    midly::TrackEventKind::Midi {
+                        message: midly::MidiMessage::NoteOff { key, .. }, ..
+                    } => {
+                        let k = key.as_int();
+                        if let Some(on_tick) = active.remove(&k) {
+                            #[allow(clippy::cast_precision_loss)]
+                        let beats = quantize_beats((tick - on_tick) as f32 / ticks_per_beat);
+                            timed.push((on_tick, k, beats));
+                        }
+                    }
+                    _ => {}
                 }
+            }
+            // Notes still active at end of track (no NoteOff) get a quarter-note duration.
+            for (k, on_tick) in active {
+                timed.push((on_tick, k, 1.0));
             }
         }
 
@@ -135,7 +175,7 @@ impl MidiFileSong {
         }
 
         timed.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
-        let notes: Vec<u8> = timed.into_iter().map(|(_, n)| n).collect();
+        let notes: Vec<(u8, f32)> = timed.into_iter().map(|(_, midi, beats)| (midi, beats)).collect();
 
         let filename = path
             .file_name()
@@ -165,7 +205,7 @@ impl MidiFileSong {
         self.notes[self.index..]
             .iter()
             .take(count)
-            .map(|&n| Note::new(n))
+            .map(|&(midi, beats)| Note::with_beats(midi, beats))
             .collect()
     }
 
@@ -262,13 +302,6 @@ impl Song {
         }
     }
 
-    /// Number of notes already played (= global index of the current note).
-    pub fn note_index(&self) -> usize {
-        match self {
-            Song::Random(r) => r.index,
-            Song::MidiFile(f) => f.index,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -277,6 +310,7 @@ mod tests {
 
     // Test module is a child of song.rs so it can access private struct fields directly.
     fn make_midi_song(notes: Vec<u8>) -> MidiFileSong {
+        let notes = notes.into_iter().map(|m| (m, 1.0_f32)).collect();
         MidiFileSong { filename: "test.mid".to_string(), notes, index: 0, beats_per_measure: 4, beat_unit: 4 }
     }
 

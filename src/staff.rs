@@ -9,18 +9,43 @@ const LETTER_NAMES: [&str; 12] = [
 /// Accidentals share the diatonic step of the natural below them.
 const DIATONIC_STEPS: [i32; 12] = [0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6];
 
-/// A note identified by its MIDI note number (0–127).
+/// A note identified by its MIDI note number and rhythmic duration in beats.
 /// Middle C is MIDI 60 (C4 in scientific pitch notation).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// `beats` follows standard values: 4.0 = whole, 2.0 = half, 1.0 = quarter,
+/// 0.5 = eighth, 0.25 = sixteenth. Defaults to 1.0 (quarter note).
+#[derive(Debug, Clone, Copy)]
 pub struct Note {
     pub midi: u8,
+    pub beats: f32,
+}
+
+// Equality and ordering are pitch-only: two C4s of different lengths are the
+// same note for the purpose of answer-checking, sorting, and hash-keying.
+impl PartialEq for Note {
+    fn eq(&self, other: &Self) -> bool { self.midi == other.midi }
+}
+impl Eq for Note {}
+impl PartialOrd for Note {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> { Some(self.cmp(other)) }
+}
+impl Ord for Note {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering { self.midi.cmp(&other.midi) }
+}
+impl std::hash::Hash for Note {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) { self.midi.hash(state); }
 }
 
 impl Note {
-    /// Construct a note from a raw MIDI note number.
+    /// Construct a quarter-note pitch from a raw MIDI note number.
     #[inline]
-    pub const fn new(midi: u8) -> Self {
-        Self { midi }
+    pub fn new(midi: u8) -> Self {
+        Self { midi, beats: 1.0 }
+    }
+
+    /// Construct a note with an explicit duration in beats.
+    #[inline]
+    pub fn with_beats(midi: u8, beats: f32) -> Self {
+        Self { midi, beats }
     }
 
     /// Letter name of the pitch class, e.g. `"C"`, `"F#"`.
