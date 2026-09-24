@@ -124,8 +124,10 @@ impl TrainerApp {
     }
 
     fn handle_midi_note(&mut self, played: u8) {
+        // If the previous note was correct and the display delay is still running,
+        // advance immediately so the player doesn't have to wait for the animation.
         if matches!(self.feedback, Feedback::Correct(_)) {
-            return;
+            self.advance_to_next();
         }
         self.score.attempts += 1;
         if played == self.current_note.midi {
