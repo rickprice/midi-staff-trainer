@@ -250,7 +250,7 @@ impl TrainerApp {
                 Ordering::Equal => match self.feedback {
                     Feedback::Correct(_) => Color32::from_rgb(50, 180, 80),
                     Feedback::Wrong { .. } => Color32::from_rgb(210, 60, 60),
-                    Feedback::Waiting | Feedback::OutOfRange(_) => Color32::from_gray(230),
+                    Feedback::Waiting | Feedback::OutOfRange(_) => Color32::from_rgb(212, 175, 55),
                 },
                 Ordering::Greater => Color32::from_gray(155),
             };
