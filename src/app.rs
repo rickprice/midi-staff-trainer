@@ -218,6 +218,9 @@ impl TrainerApp {
         let x0 = cx - staff_width / 2.0;
         let x1 = cx + staff_width / 2.0;
 
+        let bottom_line_y = cy + 2.0 * line_spacing;
+        let top_line_y = cy - 2.0 * line_spacing;
+
         let staff_color = Color32::from_gray(220);
         let staff_stroke = Stroke::new(1.5_f32, staff_color);
         for i in 0..5_i32 {
@@ -227,15 +230,41 @@ impl TrainerApp {
 
         draw_treble_clef(painter, x0, cy, line_spacing, staff_color);
 
-        // Compute how many notes fit after the treble clef.
-        let clef_width = line_spacing * 4.0;
+        // Time signature — drawn after the clef, before the first note.
+        let beats = self.song.beats_per_measure();
+        let unit = self.song.beat_unit();
+        let ts_x = x0 + line_spacing * 3.4;
+        let ts_font = FontId::proportional(line_spacing * 1.9);
+        painter.text(Pos2::new(ts_x, cy - line_spacing * 0.85), egui::Align2::CENTER_CENTER, beats.to_string(), ts_font.clone(), staff_color);
+        painter.text(Pos2::new(ts_x, cy + line_spacing * 0.85), egui::Align2::CENTER_CENTER, unit.to_string(), ts_font, staff_color);
+
+        // Compute how many notes fit after the treble clef + time signature.
+        let clef_width = line_spacing * 5.5;
         let note_spacing = line_spacing * 3.0;
         let notes_area = staff_width - clef_width;
         let page_size = ((notes_area / note_spacing).floor() as usize).max(1);
         let notes_start_x = x0 + clef_width + note_spacing * 0.5;
 
-        let bottom_line_y = cy + 2.0 * line_spacing;
-        let top_line_y = cy - 2.0 * line_spacing;
+        // Bar lines: left edge, after clef/time-sig, right edge.
+        for bar_x in [x0, x0 + clef_width, x1] {
+            painter.line_segment(
+                [Pos2::new(bar_x, top_line_y), Pos2::new(bar_x, bottom_line_y)],
+                staff_stroke,
+            );
+        }
+
+        // Measure bar lines: between notes wherever the global beat index crosses a boundary.
+        let page_start = self.song.note_index().saturating_sub(self.page_cursor);
+        let visible = self.page.len().min(page_size);
+        for i in 1..visible {
+            if (page_start + i).is_multiple_of(usize::from(beats)) {
+                let bar_x = notes_start_x + (i as f32 - 0.5) * note_spacing;
+                painter.line_segment(
+                    [Pos2::new(bar_x, top_line_y), Pos2::new(bar_x, bottom_line_y)],
+                    staff_stroke,
+                );
+            }
+        }
         let note_r = line_spacing * 0.45;
         let ledger_hw = note_r * 2.2;
         let ledger_stroke = Stroke::new(1.5_f32, staff_color);

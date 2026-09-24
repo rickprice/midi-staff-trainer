@@ -18,6 +18,8 @@ pub struct RandomSong {
     queue: VecDeque<Note>,
     size: Option<usize>,
     pub index: usize,
+    pub beats_per_measure: u8,
+    pub beat_unit: u8,
 }
 
 impl RandomSong {
@@ -25,7 +27,7 @@ impl RandomSong {
         let mut scheduler = Scheduler::new(low, high);
         let fill = size.map_or(LOOKAHEAD, |s| s.min(LOOKAHEAD));
         let queue = (0..fill).map(|_| scheduler.pick_next()).collect();
-        Self { active_low: low, active_high: high, scheduler, queue, size, index: 0 }
+        Self { active_low: low, active_high: high, scheduler, queue, size, index: 0, beats_per_measure: 4, beat_unit: 4 }
     }
 
     pub fn advance(&mut self) {
@@ -88,12 +90,29 @@ pub struct MidiFileSong {
     pub filename: String,
     notes: Vec<u8>,
     pub index: usize,
+    pub beats_per_measure: u8,
+    pub beat_unit: u8,
 }
 
 impl MidiFileSong {
     pub fn load(path: &Path) -> Result<Self, String> {
         let data = std::fs::read(path).map_err(|e| format!("Cannot read file: {e}"))?;
         let smf = midly::Smf::parse(&data).map_err(|e| format!("Invalid MIDI file: {e}"))?;
+
+        // Extract time signature from the first meta event that declares one.
+        let mut beats_per_measure = 4u8;
+        let mut beat_unit = 4u8;
+        'ts: for track in &smf.tracks {
+            for event in track {
+                if let midly::TrackEventKind::Meta(
+                    midly::MetaMessage::TimeSignature(num, denom, _, _)
+                ) = event.kind {
+                    beats_per_measure = num;
+                    beat_unit = 1u8 << denom.min(7);
+                    break 'ts;
+                }
+            }
+        }
 
         let mut timed: Vec<(u64, u8)> = Vec::new();
         for track in &smf.tracks {
@@ -124,7 +143,7 @@ impl MidiFileSong {
             .unwrap_or("unknown.mid")
             .to_string();
 
-        Ok(Self { filename, notes, index: 0 })
+        Ok(Self { filename, notes, index: 0, beats_per_measure, beat_unit })
     }
 
     pub fn advance(&mut self) {
@@ -228,6 +247,28 @@ impl Song {
     pub fn as_midi_file(&self) -> Option<&MidiFileSong> {
         if let Song::MidiFile(f) = self { Some(f) } else { None }
     }
+
+    pub fn beats_per_measure(&self) -> u8 {
+        match self {
+            Song::Random(r) => r.beats_per_measure,
+            Song::MidiFile(f) => f.beats_per_measure,
+        }
+    }
+
+    pub fn beat_unit(&self) -> u8 {
+        match self {
+            Song::Random(r) => r.beat_unit,
+            Song::MidiFile(f) => f.beat_unit,
+        }
+    }
+
+    /// Number of notes already played (= global index of the current note).
+    pub fn note_index(&self) -> usize {
+        match self {
+            Song::Random(r) => r.index,
+            Song::MidiFile(f) => f.index,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -236,7 +277,7 @@ mod tests {
 
     // Test module is a child of song.rs so it can access private struct fields directly.
     fn make_midi_song(notes: Vec<u8>) -> MidiFileSong {
-        MidiFileSong { filename: "test.mid".to_string(), notes, index: 0 }
+        MidiFileSong { filename: "test.mid".to_string(), notes, index: 0, beats_per_measure: 4, beat_unit: 4 }
     }
 
     // ── RandomSong ───────────────────────────────────────────────────────────────
