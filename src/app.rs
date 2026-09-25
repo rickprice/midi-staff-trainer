@@ -127,6 +127,15 @@ impl TrainerApp {
         self.current_note = self.page.first().copied().unwrap_or(Note::new(60));
     }
 
+    fn restart_song(&mut self) {
+        self.song.restart();
+        self.reset_page();
+        self.score = Score::default();
+        self.feedback = Feedback::Waiting;
+        self.correct_at = None;
+        self.note_shown_at = Some(Instant::now());
+    }
+
     fn handle_midi_note(&mut self, played: u8) {
         // If the previous note was correct and the display delay is still running,
         // advance immediately so the player doesn't have to wait for the animation.
@@ -410,10 +419,14 @@ impl eframe::App for TrainerApp {
             }
         }
 
-        let (r_pressed, esc_pressed) = ctx.input(|i| (
-            i.key_pressed(egui::Key::R),
+        let (r_pressed, ctrl_r_pressed, esc_pressed) = ctx.input(|i| (
+            i.key_pressed(egui::Key::R) && !i.modifiers.ctrl,
+            i.key_pressed(egui::Key::R) && i.modifiers.ctrl,
             i.key_pressed(egui::Key::Escape),
         ));
+        if ctrl_r_pressed && matches!(self.mode, AppMode::Playing) {
+            self.restart_song();
+        }
         if r_pressed && matches!(self.mode, AppMode::Playing) && self.song.as_random().is_some() {
             self.mode = AppMode::SettingRange(Vec::new());
             self.correct_at = None;
@@ -504,6 +517,11 @@ impl eframe::App for TrainerApp {
                             }
                         }
                     }
+                    if mode_state.is_none() && !song_is_complete
+                        && ui.small_button("Restart [Ctrl+R]").clicked()
+                    {
+                        self.restart_song();
+                    }
                     if ui.small_button("Load MIDI").clicked() {
                         self.load_midi_file();
                     }
@@ -548,13 +566,8 @@ impl eframe::App for TrainerApp {
                         format!("Complete! {}/{} notes correct{}.", self.score.correct, total, accuracy_str),
                     );
                     ui.horizontal(|ui| {
-                        if ui.button("Restart").clicked() {
-                            self.song.restart();
-                            self.reset_page();
-                            self.score = Score::default();
-                            self.feedback = Feedback::Waiting;
-                            self.correct_at = None;
-                            self.note_shown_at = Some(Instant::now());
+                        if ui.button("Restart [Ctrl+R]").clicked() {
+                            self.restart_song();
                         }
                         if midi_file_info.is_some() && ui.button("Load New Song").clicked() {
                             self.load_midi_file();
