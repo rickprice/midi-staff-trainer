@@ -1,21 +1,58 @@
 # MIDI Staff Trainer
 
-A desktop app for learning the connection between keys on a MIDI keyboard and notes on the musical staff. A random note is displayed on the treble clef; play the matching key to advance to the next one.
+A desktop app for learning to read sheet music with a MIDI keyboard. Notes are displayed on the treble clef; play the matching key to advance. Supports both a random note trainer with spaced repetition and playback of MIDI files.
 
 ## Features
 
+### Staff display
 - Treble clef rendered using the Noto Music font glyph (authentic engraved style)
+- Multi-note staff display with horizontal paging — see upcoming notes at a glance
+- Whole, half, quarter, eighth, and sixteenth note heads with stems and flags
 - Ledger lines above and below the staff as needed
+- Time signature display parsed from MIDI files (fallback 4/4)
+- Beat-accurate bar lines across mixed note values and page flips
+- Played notes dim to grey; active note is gold; upcoming notes are medium grey
+
+### Piano keyboard visualization
+- Full 88-key keyboard (A0–C8) at the bottom of the window, show/hide with **K**
+- Gold key = currently expected note
+- Green flash (~500 ms) = correct answer
+- Red flash (~500 ms) = wrong answer
+- Keys outside the active training range shown slightly dimmer
+- Boundary triangles mark the active training range (random mode) or full keyboard range (MIDI file mode)
+
+### Input and feedback
 - Connects to any ALSA MIDI input device (USB or hardware MIDI)
-- Note range is configurable to match non-full-sized keyboards
-- Score tracking (correct / total attempts, accuracy %)
-- Note name displayed at the bottom of the screen as a reference hint (not next to the note, to encourage reading staff position)
 - Correct answers flash green and auto-advance after ~1 second
+- Playing the next note during the green flash immediately advances
 - Wrong answers flash red and prompt you to try again
-- Notes played outside the active training range are identified by name without counting as an attempt
-- Training range is remembered across sessions (stored in `~/.cache/midi-staff-trainer/state.toml`)
-- Leitner spaced-repetition scheduler: 5 box levels with weighted random draws (box 0 weight 10×, box 4 weight 0.5×) so weaker notes appear more often
-- Response latency tracking: answers within 1500 ms count as "fast" and advance the note to the next box; slower correct answers stay in the current box; wrong answers reset the note to box 0
+- Notes played outside the active training range are identified without counting as an attempt
+
+### Random trainer
+- Configurable note range to match non-full-sized keyboards
+- Set range interactively: press **R**, then play any two keys
+- Leitner spaced-repetition scheduler: 5 box levels; weaker notes appear more often
+- Response latency tracking: fast answers (< 1500 ms) advance the note up a box; slow correct answers stay; wrong answers reset to box 0
+- Training range remembered across sessions (`~/.cache/midi-staff-trainer/state.toml`)
+
+### MIDI file mode
+- Open any `.mid` file via the file picker
+- Note durations (whole/half/quarter/eighth/sixteenth) preserved from the file
+- Time signature read from the file
+
+### General
+- Score tracking (correct / total attempts, accuracy %)
+- Restart current song/session: **Ctrl+R** or the Restart button
+- All state persisted in `~/.cache/midi-staff-trainer/state.toml`
+
+## Keyboard shortcuts
+
+| Key | Action |
+|-----|--------|
+| **R** | Set training range (random mode) |
+| **Ctrl+R** | Restart current song / session |
+| **K** | Toggle piano keyboard display |
+| **Esc** | Cancel range-setting |
 
 ## Requirements
 
@@ -57,8 +94,6 @@ nix develop
 cargo test
 ```
 
-The test suite covers `Note` (letter names, octaves, display, accidentals, staff positions), `natural_notes_in_range` (range filtering, edge cases), `random_natural_note` (range correctness, no accidentals, variety), `Config` (defaults, TOML round-trips, partial overrides), and `AppState` (defaults, TOML round-trips, missing-file fallback).
-
 ## Configuration
 
 On first launch a config file is written to `~/.config/midi-staff-trainer/config.toml`:
@@ -85,12 +120,13 @@ Common keyboard ranges:
 
 | File | Responsibility |
 |------|---------------|
-| `src/staff.rs` | `Note` type — letter names, octaves, staff positions, random picker |
+| `src/app.rs` | egui application — staff drawing, piano keyboard, MIDI polling, feedback state |
+| `src/song.rs` | `Song` enum unifying `RandomSong` and `MidiFileSong` — note delivery, restart, range |
+| `src/staff.rs` | `Note` type — letter names, octaves, staff positions |
 | `src/scheduler.rs` | Leitner spaced-repetition scheduler — box levels, weighted draws, latency tracking |
 | `src/config.rs` | TOML config — load / save / defaults (`~/.config/…/config.toml`) |
 | `src/state.rs` | Runtime state — training range persisted across sessions (`~/.cache/…/state.toml`) |
 | `src/midi.rs` | ALSA MIDI input connection and port listing |
-| `src/app.rs` | egui application — staff drawing, MIDI polling, feedback state |
 | `src/main.rs` | Entry point |
 
 ## License
