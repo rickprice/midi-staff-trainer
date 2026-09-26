@@ -444,24 +444,25 @@ impl TrainerApp {
             painter.rect_filled(key_rect, 2.0, piano_key_color(midi, expected, flash, base));
         }
 
-        // Downward-pointing triangles above range boundary keys.
-        if let Some((lo, hi)) = range {
-            let tri_color = Color32::from_gray(180);
-            let tri_h = tri_strip * 0.75;
-            let tri_w = tri_h * 0.9;
-            for &boundary in &[lo, hi] {
-                let cx = rect.left() + piano_key_center_x(boundary, white_width);
-                let y_tip = key_top;
-                painter.add(Shape::convex_polygon(
-                    vec![
-                        Pos2::new(cx - tri_w, y_tip - tri_h),
-                        Pos2::new(cx + tri_w, y_tip - tri_h),
-                        Pos2::new(cx, y_tip),
-                    ],
-                    tri_color,
-                    Stroke::NONE,
-                ));
-            }
+        // Downward-pointing triangles above boundary keys.
+        // In random mode: show the training range boundaries.
+        // In MIDI file mode: show the full 88-key keyboard boundaries.
+        let (tri_lo, tri_hi) = range.unwrap_or((MIDI_MIN, MIDI_MAX));
+        let tri_color = Color32::from_gray(180);
+        let tri_h = tri_strip * 0.75;
+        let tri_w = tri_h * 0.9;
+        for &boundary in &[tri_lo, tri_hi] {
+            let cx = rect.left() + piano_key_center_x(boundary, white_width);
+            let y_tip = key_top;
+            painter.add(Shape::convex_polygon(
+                vec![
+                    Pos2::new(cx - tri_w, y_tip - tri_h),
+                    Pos2::new(cx + tri_w, y_tip - tri_h),
+                    Pos2::new(cx, y_tip),
+                ],
+                tri_color,
+                Stroke::NONE,
+            ));
         }
     }
 }
