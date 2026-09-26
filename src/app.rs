@@ -6,7 +6,7 @@ use crate::{
     staff::Note,
     state::AppState,
 };
-use egui::{Color32, FontData, FontDefinitions, FontFamily, FontId, Painter, Pos2, Rect, Stroke};
+use egui::{Color32, FontData, FontDefinitions, FontFamily, FontId, Painter, Pos2, Rect, Shape, Stroke};
 use std::cmp::Ordering;
 use std::time::{Duration, Instant};
 
@@ -34,6 +34,8 @@ pub struct TrainerApp {
     page_cursor: usize,
     page_size: usize,
     beat_cursor: f32,
+    last_key_result: Option<(u8, bool, Instant)>,
+    show_keyboard: bool,
 }
 
 #[derive(Default)]
@@ -101,6 +103,8 @@ impl TrainerApp {
             page_cursor: 0,
             page_size,
             beat_cursor: 0.0,
+            last_key_result: None,
+            show_keyboard: true,
         }
     }
 
@@ -118,6 +122,7 @@ impl TrainerApp {
         self.feedback = Feedback::Waiting;
         self.correct_at = None;
         self.note_shown_at = Some(Instant::now());
+        self.last_key_result = None;
     }
 
     fn reset_page(&mut self) {
@@ -125,6 +130,7 @@ impl TrainerApp {
         self.page_cursor = 0;
         self.beat_cursor = 0.0;
         self.current_note = self.page.first().copied().unwrap_or(Note::new(60));
+        self.last_key_result = None;
     }
 
     fn restart_song(&mut self) {
@@ -134,6 +140,7 @@ impl TrainerApp {
         self.feedback = Feedback::Waiting;
         self.correct_at = None;
         self.note_shown_at = Some(Instant::now());
+        self.last_key_result = None;
     }
 
     fn handle_midi_note(&mut self, played: u8) {
@@ -150,12 +157,14 @@ impl TrainerApp {
             self.score.correct += 1;
             self.feedback = Feedback::Correct(self.current_note);
             self.correct_at = Some(Instant::now());
+            self.last_key_result = Some((played, true, Instant::now()));
         } else {
             self.song.record_incorrect(self.current_note.midi);
             self.feedback = Feedback::Wrong {
                 expected: self.current_note,
                 got: Note::new(played),
             };
+            self.last_key_result = Some((played, false, Instant::now()));
         }
     }
 
@@ -382,6 +391,110 @@ impl TrainerApp {
 
         page_size
     }
+
+    #[allow(clippy::cast_precision_loss)]
+    fn draw_keyboard(&self, painter: &Painter, rect: Rect) {
+        const MIDI_MIN: u8 = 21;
+        const MIDI_MAX: u8 = 108;
+        const WHITE_KEYS: f32 = 52.0;
+
+        let white_width = rect.width() / WHITE_KEYS;
+        let black_width = white_width * 0.6;
+
+        // Reserve a small strip at the top for range marker triangles.
+        let tri_strip = 14.0_f32;
+        let key_top = rect.top() + tri_strip;
+        let key_height = rect.height() - tri_strip;
+        let black_height = key_height * 0.62;
+
+        // Training range — None means all keys shown equally (MIDI file mode).
+        let range: Option<(u8, u8)> = self.song.as_random().map(|r| (r.active_low, r.active_high));
+        let flash: Option<(u8, bool)> = self.last_key_result.and_then(|(m, ok, when)| {
+            (when.elapsed() < Duration::from_millis(500)).then_some((m, ok))
+        });
+        let expected = self.current_note.midi;
+
+        // White keys.
+        for midi in MIDI_MIN..=MIDI_MAX {
+            if piano_is_black(midi) { continue; }
+            let x = rect.left() + piano_white_idx(midi) as f32 * white_width;
+            let key_rect = Rect::from_min_max(
+                Pos2::new(x, key_top),
+                Pos2::new(x + white_width - 1.0, key_top + key_height),
+            );
+            let in_range = range.is_none_or(|(lo, hi)| midi >= lo && midi <= hi);
+            let base = if in_range { Color32::WHITE } else { Color32::from_gray(200) };
+            painter.rect_filled(key_rect, 0.0, piano_key_color(midi, expected, flash, base));
+            painter.rect_stroke(key_rect, 0.0, Stroke::new(1.0, Color32::from_gray(140)), egui::StrokeKind::Outside);
+        }
+
+        // Black keys (drawn on top).
+        for midi in MIDI_MIN..=MIDI_MAX {
+            if !piano_is_black(midi) { continue; }
+            let x_center = rect.left() + piano_key_center_x(midi, white_width);
+            let key_rect = Rect::from_min_max(
+                Pos2::new(x_center - black_width * 0.5, key_top),
+                Pos2::new(x_center + black_width * 0.5, key_top + black_height),
+            );
+            let in_range = range.is_none_or(|(lo, hi)| midi >= lo && midi <= hi);
+            let base = if in_range { Color32::from_gray(30) } else { Color32::from_gray(80) };
+            painter.rect_filled(key_rect, 2.0, piano_key_color(midi, expected, flash, base));
+        }
+
+        // Downward-pointing triangles above range boundary keys.
+        if let Some((lo, hi)) = range {
+            let tri_color = Color32::from_gray(180);
+            let tri_h = tri_strip * 0.75;
+            let tri_w = tri_h * 0.9;
+            for &boundary in &[lo, hi] {
+                let cx = rect.left() + piano_key_center_x(boundary, white_width);
+                let y_tip = key_top;
+                painter.add(Shape::convex_polygon(
+                    vec![
+                        Pos2::new(cx - tri_w, y_tip - tri_h),
+                        Pos2::new(cx + tri_w, y_tip - tri_h),
+                        Pos2::new(cx, y_tip),
+                    ],
+                    tri_color,
+                    Stroke::NONE,
+                ));
+            }
+        }
+    }
+}
+
+fn piano_is_black(midi: u8) -> bool {
+    matches!(midi % 12, 1 | 3 | 6 | 8 | 10)
+}
+
+/// White key index (0 = A0 = MIDI 21) for a MIDI note.
+/// Returns the number of white keys in [21, midi).
+/// Uses the fixed semitone-offset pattern starting from A, repeated every octave.
+const fn piano_white_idx(midi: u8) -> usize {
+    // White keys before each semitone offset within one octave starting at A (pc=9):
+    // A=0,A#=1,B=1,C=2,C#=3,D=3,D#=4,E=4,F=5,F#=6,G=6,G#=7
+    const WHITES_BEFORE: [usize; 12] = [0, 1, 1, 2, 3, 3, 4, 4, 5, 6, 6, 7];
+    let n = (midi - 21) as usize;
+    (n / 12) * 7 + WHITES_BEFORE[n % 12]
+}
+
+/// X center of a key (white or black) relative to the keyboard left edge, in pixels.
+#[allow(clippy::cast_precision_loss)]
+fn piano_key_center_x(midi: u8, white_width: f32) -> f32 {
+    if piano_is_black(midi) {
+        // Center of black key = right edge of the white key immediately below
+        (piano_white_idx(midi - 1) + 1) as f32 * white_width
+    } else {
+        (piano_white_idx(midi) as f32 + 0.5) * white_width
+    }
+}
+
+fn piano_key_color(midi: u8, expected: u8, flash: Option<(u8, bool)>, base: Color32) -> Color32 {
+    if let Some((flash_midi, correct)) = flash
+        && flash_midi == midi {
+        return if correct { Color32::from_rgb(50, 180, 80) } else { Color32::from_rgb(210, 60, 60) };
+    }
+    if midi == expected { Color32::from_rgb(212, 175, 55) } else { base }
 }
 
 fn draw_treble_clef(painter: &Painter, x0: f32, cy: f32, s: f32, color: Color32) {
@@ -419,13 +532,17 @@ impl eframe::App for TrainerApp {
             }
         }
 
-        let (r_pressed, ctrl_r_pressed, esc_pressed) = ctx.input(|i| (
+        let (r_pressed, ctrl_r_pressed, k_pressed, esc_pressed) = ctx.input(|i| (
             i.key_pressed(egui::Key::R) && !i.modifiers.ctrl,
             i.key_pressed(egui::Key::R) && i.modifiers.ctrl,
+            i.key_pressed(egui::Key::K),
             i.key_pressed(egui::Key::Escape),
         ));
         if ctrl_r_pressed && matches!(self.mode, AppMode::Playing) {
             self.restart_song();
+        }
+        if k_pressed {
+            self.show_keyboard = !self.show_keyboard;
         }
         if r_pressed && matches!(self.mode, AppMode::Playing) && self.song.as_random().is_some() {
             self.mode = AppMode::SettingRange(Vec::new());
@@ -447,6 +564,17 @@ impl eframe::App for TrainerApp {
                 self.advance_to_next();
             } else {
                 ctx.request_repaint_after(delay.saturating_sub(elapsed));
+            }
+        }
+
+        // Only schedule a flash repaint on the wrong-note path; on the correct path
+        // the correct_at timer (900ms) already ensures a repaint before 500ms expires.
+        if self.correct_at.is_none()
+            && let Some((_, _, when)) = self.last_key_result {
+            let flash_dur = Duration::from_millis(500);
+            let elapsed = when.elapsed();
+            if elapsed < flash_dur {
+                ctx.request_repaint_after(flash_dur.saturating_sub(elapsed));
             }
         }
 
@@ -521,6 +649,10 @@ impl eframe::App for TrainerApp {
                         && ui.small_button("Restart [Ctrl+R]").clicked()
                     {
                         self.restart_song();
+                    }
+                    let kb_label = if self.show_keyboard { "Hide Keys [K]" } else { "Show Keys [K]" };
+                    if ui.small_button(kb_label).clicked() {
+                        self.show_keyboard = !self.show_keyboard;
                     }
                     if ui.small_button("Load MIDI").clicked() {
                         self.load_midi_file();
@@ -656,13 +788,332 @@ impl eframe::App for TrainerApp {
 
         egui::CentralPanel::default().show(ui, |ui| {
             let rect = ui.available_rect_before_wrap();
-            let new_page_size = self.draw_staff(ui.painter(), rect);
+            let (staff_rect, kb_rect) = if self.show_keyboard {
+                let kb_height = (rect.height() * 0.20).max(60.0);
+                let staff = Rect::from_min_max(rect.min, Pos2::new(rect.max.x, rect.max.y - kb_height));
+                let kb = Rect::from_min_max(Pos2::new(rect.min.x, rect.max.y - kb_height), rect.max);
+                (staff, Some(kb))
+            } else {
+                (rect, None)
+            };
+            let new_page_size = self.draw_staff(ui.painter(), staff_rect);
             if new_page_size != self.page_size {
                 self.page_size = new_page_size;
                 self.page = self.song.peek(self.page_size);
                 self.page_cursor = 0;
                 self.current_note = self.page.first().copied().unwrap_or(self.current_note);
             }
+            if let Some(kb) = kb_rect {
+                self.draw_keyboard(ui.painter(), kb);
+            }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── piano_is_black ────────────────────────────────────────────────────────
+
+    #[test]
+    fn black_keys_are_the_five_sharps() {
+        // Within an octave, only C#/D#/F#/G#/A# are black.
+        for pc in [1u8, 3, 6, 8, 10] {
+            assert!(piano_is_black(pc), "pitch class {pc} should be black");
+            assert!(piano_is_black(pc + 12), "pitch class {pc} + octave should be black");
+        }
+    }
+
+    #[test]
+    fn white_keys_are_the_seven_naturals() {
+        for pc in [0u8, 2, 4, 5, 7, 9, 11] {
+            assert!(!piano_is_black(pc), "pitch class {pc} should be white");
+        }
+    }
+
+    #[test]
+    fn black_pattern_repeats_every_octave() {
+        for midi in 21u8..=96 {
+            assert_eq!(
+                piano_is_black(midi),
+                piano_is_black(midi + 12),
+                "black/white should repeat at octave for MIDI {midi}"
+            );
+        }
+    }
+
+    #[test]
+    fn piano_range_boundaries_are_white() {
+        assert!(!piano_is_black(21),  "A0 (MIDI 21) should be white");
+        assert!(!piano_is_black(108), "C8 (MIDI 108) should be white");
+    }
+
+    #[test]
+    fn a_sharp_is_black() {
+        // A#0 = MIDI 22
+        assert!(piano_is_black(22));
+    }
+
+    #[test]
+    fn exactly_five_black_keys_per_octave() {
+        let black_count = (0u8..12).filter(|&pc| piano_is_black(pc)).count();
+        assert_eq!(black_count, 5);
+    }
+
+    #[test]
+    fn exactly_seven_white_keys_per_octave() {
+        let white_count = (0u8..12).filter(|&pc| !piano_is_black(pc)).count();
+        assert_eq!(white_count, 7);
+    }
+
+    // ── piano_white_idx ───────────────────────────────────────────────────────
+
+    #[test]
+    fn a0_is_white_key_zero() {
+        assert_eq!(piano_white_idx(21), 0);
+    }
+
+    #[test]
+    fn b0_is_white_key_one() {
+        // MIDI 23 = B0
+        assert_eq!(piano_white_idx(23), 1);
+    }
+
+    #[test]
+    fn c1_is_white_key_two() {
+        // MIDI 24 = C1
+        assert_eq!(piano_white_idx(24), 2);
+    }
+
+    #[test]
+    fn white_keys_in_first_octave_fragment() {
+        // A0=0, B0=1, then C1 starts at 2
+        assert_eq!(piano_white_idx(21), 0);  // A0
+        assert_eq!(piano_white_idx(23), 1);  // B0
+        assert_eq!(piano_white_idx(24), 2);  // C1
+        assert_eq!(piano_white_idx(26), 3);  // D1
+        assert_eq!(piano_white_idx(28), 4);  // E1
+        assert_eq!(piano_white_idx(29), 5);  // F1
+        assert_eq!(piano_white_idx(31), 6);  // G1
+        assert_eq!(piano_white_idx(33), 7);  // A1
+        assert_eq!(piano_white_idx(35), 8);  // B1
+        assert_eq!(piano_white_idx(36), 9);  // C2
+    }
+
+    #[test]
+    fn middle_c_is_white_key_23() {
+        // C4 = MIDI 60: 2 (A0-B0) + 7*(3 octaves C1-B3) = 23
+        assert_eq!(piano_white_idx(60), 23);
+    }
+
+    #[test]
+    fn c4_neighbours() {
+        assert_eq!(piano_white_idx(59), 22);  // B3
+        assert_eq!(piano_white_idx(60), 23);  // C4
+        assert_eq!(piano_white_idx(62), 24);  // D4
+        assert_eq!(piano_white_idx(64), 25);  // E4
+        assert_eq!(piano_white_idx(65), 26);  // F4
+        assert_eq!(piano_white_idx(67), 27);  // G4
+        assert_eq!(piano_white_idx(69), 28);  // A4
+        assert_eq!(piano_white_idx(71), 29);  // B4
+        assert_eq!(piano_white_idx(72), 30);  // C5
+    }
+
+    #[test]
+    fn c8_is_white_key_51() {
+        // MIDI 108 = C8, the last white key on an 88-key piano
+        assert_eq!(piano_white_idx(108), 51);
+    }
+
+    #[test]
+    fn seven_new_white_keys_per_octave() {
+        // Each octave from C adds exactly 7 white keys.
+        for start in [24u8, 36, 48, 60, 72, 84] {
+            let idx_start = piano_white_idx(start);
+            let idx_next_c = piano_white_idx(start + 12);
+            assert_eq!(
+                idx_next_c - idx_start, 7,
+                "Octave from MIDI {start} should add 7 white keys"
+            );
+        }
+    }
+
+    #[test]
+    fn white_key_indices_are_strictly_ascending() {
+        let mut prev = piano_white_idx(21);
+        for midi in 22u8..=108 {
+            if piano_is_black(midi) { continue; }
+            let curr = piano_white_idx(midi);
+            assert_eq!(
+                curr, prev + 1,
+                "White key indices must be consecutive (MIDI {midi})"
+            );
+            prev = curr;
+        }
+    }
+
+    #[test]
+    fn total_white_keys_in_piano_range() {
+        let count = (21u8..=108).filter(|&m| !piano_is_black(m)).count();
+        assert_eq!(count, 52, "An 88-key piano has 52 white keys");
+    }
+
+    // ── piano_key_center_x ────────────────────────────────────────────────────
+
+    const WW: f32 = 10.0; // test white-key width
+
+    #[test]
+    fn a0_center_is_half_white_width() {
+        // A0 = white key 0; center = 0.5 * WW
+        assert!((piano_key_center_x(21, WW) - 5.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn b0_center() {
+        // B0 = white key 1; center = 1.5 * WW
+        assert!((piano_key_center_x(23, WW) - 15.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_sharp0_center_is_between_a0_and_b0() {
+        // A#0 is between A0 (ends at WW) and B0 (starts at WW): center = WW
+        let cx = piano_key_center_x(22, WW);
+        assert!((cx - 10.0).abs() < 1e-4, "A#0 center should be {WW}, got {cx}");
+    }
+
+    #[test]
+    fn c1_center() {
+        // C1 = white key 2; center = 2.5 * WW
+        assert!((piano_key_center_x(24, WW) - 25.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn c_sharp1_center_is_between_c1_and_d1() {
+        // C#1 black: right edge of C1 (white key 2) = 3 * WW = 30.0
+        let cx = piano_key_center_x(25, WW);
+        assert!((cx - 30.0).abs() < 1e-4, "C#1 center should be 30.0, got {cx}");
+    }
+
+    #[test]
+    fn c8_center_is_last_key() {
+        // C8 = white key 51; center = 51.5 * WW
+        let cx = piano_key_center_x(108, WW);
+        assert!((cx - 515.0).abs() < 1e-4, "C8 center should be 515.0, got {cx}");
+    }
+
+    #[test]
+    fn black_key_center_always_between_adjacent_white_keys() {
+        // For every black key, its center must lie strictly between the centers of
+        // the white keys immediately to its left and right.
+        for midi in 22u8..=108 {
+            if !piano_is_black(midi) { continue; }
+            let left_center = piano_key_center_x(midi - 1, WW);
+            let right_center = piano_key_center_x(midi + 1, WW);
+            let black_center = piano_key_center_x(midi, WW);
+            assert!(
+                black_center > left_center && black_center < right_center,
+                "Black key MIDI {midi} center {black_center} not between {left_center} and {right_center}"
+            );
+        }
+    }
+
+    #[test]
+    fn white_key_centers_are_one_white_width_apart() {
+        let mut prev_center = piano_key_center_x(21, WW);
+        for midi in 22u8..=108 {
+            if piano_is_black(midi) { continue; }
+            let curr_center = piano_key_center_x(midi, WW);
+            let gap = (curr_center - prev_center - WW).abs();
+            assert!(gap < 1e-3, "Adjacent white keys should be WW apart (MIDI {midi}): gap={gap}");
+            prev_center = curr_center;
+        }
+    }
+
+    // ── piano_key_color ───────────────────────────────────────────────────────
+
+    const BASE: Color32 = Color32::WHITE;
+    const GOLD: Color32 = Color32::from_rgb(212, 175, 55);
+    const GREEN: Color32 = Color32::from_rgb(50, 180, 80);
+    const RED: Color32 = Color32::from_rgb(210, 60, 60);
+
+    #[test]
+    fn non_expected_key_with_no_flash_returns_base() {
+        let color = piano_key_color(60, 62, None, BASE);
+        assert_eq!(color, BASE);
+    }
+
+    #[test]
+    fn expected_key_with_no_flash_returns_gold() {
+        let color = piano_key_color(60, 60, None, BASE);
+        assert_eq!(color, GOLD);
+    }
+
+    #[test]
+    fn correct_flash_on_played_key_returns_green() {
+        let color = piano_key_color(60, 60, Some((60, true)), BASE);
+        assert_eq!(color, GREEN);
+    }
+
+    #[test]
+    fn wrong_flash_on_played_key_returns_red() {
+        let color = piano_key_color(60, 60, Some((60, false)), BASE);
+        assert_eq!(color, RED);
+    }
+
+    #[test]
+    fn correct_flash_on_different_key_does_not_affect_other_keys() {
+        // Flash is on MIDI 62; MIDI 60 is expected — should still show gold.
+        let color = piano_key_color(60, 60, Some((62, true)), BASE);
+        assert_eq!(color, GOLD);
+    }
+
+    #[test]
+    fn wrong_flash_on_different_key_does_not_affect_other_keys() {
+        // Flash is on MIDI 62; MIDI 60 is expected — should still show gold.
+        let color = piano_key_color(60, 60, Some((62, false)), BASE);
+        assert_eq!(color, GOLD);
+    }
+
+    #[test]
+    fn correct_flash_key_shows_green_even_if_not_expected() {
+        // MIDI 62 was played correctly; it is not the expected note — still green.
+        let color = piano_key_color(62, 60, Some((62, true)), BASE);
+        assert_eq!(color, GREEN);
+    }
+
+    #[test]
+    fn wrong_flash_key_shows_red_even_if_not_expected() {
+        let color = piano_key_color(62, 60, Some((62, false)), BASE);
+        assert_eq!(color, RED);
+    }
+
+    #[test]
+    fn green_takes_priority_over_gold_when_flash_is_on_expected_key() {
+        // Correct flash on the expected key: green wins over gold.
+        let color = piano_key_color(60, 60, Some((60, true)), BASE);
+        assert_eq!(color, GREEN, "green should take priority over gold");
+    }
+
+    #[test]
+    fn red_takes_priority_over_gold_when_flash_is_on_expected_key() {
+        // Wrong flash on the expected key: red wins over gold.
+        let color = piano_key_color(60, 60, Some((60, false)), BASE);
+        assert_eq!(color, RED, "red should take priority over gold");
+    }
+
+    #[test]
+    fn unrelated_key_with_flash_elsewhere_returns_base() {
+        // MIDI 64 is neither expected (60) nor flashed (62): base color.
+        let color = piano_key_color(64, 60, Some((62, true)), BASE);
+        assert_eq!(color, BASE);
+    }
+
+    #[test]
+    fn no_flash_non_expected_key_always_base() {
+        for midi in [21u8, 36, 48, 72, 84, 96, 108] {
+            let color = piano_key_color(midi, 60, None, BASE);
+            assert_eq!(color, BASE, "MIDI {midi} should be base with no flash");
+        }
     }
 }
