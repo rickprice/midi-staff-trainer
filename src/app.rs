@@ -446,8 +446,8 @@ impl TrainerApp {
 
         // Downward-pointing triangles above boundary keys.
         // In random mode: show the training range boundaries.
-        // In MIDI file mode: show the full 88-key keyboard boundaries.
-        let (tri_lo, tri_hi) = range.unwrap_or((MIDI_MIN, MIDI_MAX));
+        // In MIDI file mode: show the physical keyboard range from config.
+        let (tri_lo, tri_hi) = range.unwrap_or((self.config.midi_low, self.config.midi_high));
         let tri_color = Color32::from_gray(180);
         let tri_h = tri_strip * 0.75;
         let tri_w = tri_h * 0.9;
