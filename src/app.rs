@@ -407,6 +407,9 @@ impl TrainerApp {
         let key_height = rect.height() - tri_strip;
         let black_height = key_height * 0.62;
 
+        // Dark surround so white keys are visible in both light and dark themes.
+        painter.rect_filled(rect, 0.0, Color32::from_gray(40));
+
         // Training range — None means all keys shown equally (MIDI file mode).
         let range: Option<(u8, u8)> = self.song.as_random().map(|r| (r.active_low, r.active_high));
         let flash: Option<(u8, bool)> = self.last_key_result.and_then(|(m, ok, when)| {
@@ -423,9 +426,9 @@ impl TrainerApp {
                 Pos2::new(x + white_width - 1.0, key_top + key_height),
             );
             let in_range = range.is_none_or(|(lo, hi)| midi >= lo && midi <= hi);
-            let base = if in_range { Color32::WHITE } else { Color32::from_gray(200) };
+            let base = if in_range { Color32::from_gray(245) } else { Color32::from_gray(160) };
             painter.rect_filled(key_rect, 0.0, piano_key_color(midi, expected, flash, base));
-            painter.rect_stroke(key_rect, 0.0, Stroke::new(1.0, Color32::from_gray(140)), egui::StrokeKind::Outside);
+            painter.rect_stroke(key_rect, 0.0, Stroke::new(1.0, Color32::from_gray(80)), egui::StrokeKind::Outside);
         }
 
         // Black keys (drawn on top).
@@ -437,7 +440,7 @@ impl TrainerApp {
                 Pos2::new(x_center + black_width * 0.5, key_top + black_height),
             );
             let in_range = range.is_none_or(|(lo, hi)| midi >= lo && midi <= hi);
-            let base = if in_range { Color32::from_gray(30) } else { Color32::from_gray(80) };
+            let base = if in_range { Color32::from_gray(20) } else { Color32::from_gray(70) };
             painter.rect_filled(key_rect, 2.0, piano_key_color(midi, expected, flash, base));
         }
 
@@ -1032,7 +1035,7 @@ mod tests {
 
     // ── piano_key_color ───────────────────────────────────────────────────────
 
-    const BASE: Color32 = Color32::WHITE;
+    const BASE: Color32 = Color32::from_gray(245);
     const GOLD: Color32 = Color32::from_rgb(212, 175, 55);
     const GREEN: Color32 = Color32::from_rgb(50, 180, 80);
     const RED: Color32 = Color32::from_rgb(210, 60, 60);
