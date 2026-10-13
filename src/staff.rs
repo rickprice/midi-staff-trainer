@@ -82,6 +82,35 @@ impl Note {
         let octave_offset = (self.octave() - 4) * 7;
         diatonic + octave_offset
     }
+
+    /// Diatonic staff position on the bass staff, using the same coordinate
+    /// scheme as [`Note::staff_position`]: 2 = bottom line (G2), 10 = top
+    /// line (A3), even values are lines and odd values are spaces.
+    ///
+    /// This is a pure coordinate shift of `staff_position` (+12): middle C
+    /// lands one ledger line above the bass staff, mirroring how it sits one
+    /// ledger line below the treble staff.
+    #[must_use]
+    #[inline]
+    pub fn bass_staff_position(self) -> i32 {
+        self.staff_position() + 12
+    }
+
+    /// Which clef a grand staff should place this note on.
+    /// Middle C (C4) and above go to the treble staff; everything below goes
+    /// to the bass staff.
+    #[must_use]
+    #[inline]
+    pub fn clef(self) -> Clef {
+        if self.midi >= 60 { Clef::Treble } else { Clef::Bass }
+    }
+}
+
+/// Which staff of a grand staff a note is drawn on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Clef {
+    Treble,
+    Bass,
 }
 
 impl fmt::Display for Note {
@@ -252,6 +281,32 @@ mod tests {
         assert_eq!(Note::new(79).staff_position(), 11); // G5
         assert_eq!(Note::new(81).staff_position(), 12); // A5
         assert_eq!(Note::new(84).staff_position(), 14); // C6
+    }
+
+    // ── Note::bass_staff_position ───────────────────────────────────────────
+
+    #[test]
+    fn bass_staff_position_lines() {
+        assert_eq!(Note::new(43).bass_staff_position(), 2);  // G2 — bottom line
+        assert_eq!(Note::new(47).bass_staff_position(), 4);  // B2
+        assert_eq!(Note::new(50).bass_staff_position(), 6);  // D3 — middle line
+        assert_eq!(Note::new(53).bass_staff_position(), 8);  // F3
+        assert_eq!(Note::new(57).bass_staff_position(), 10); // A3 — top line
+    }
+
+    #[test]
+    fn bass_staff_position_middle_c_one_ledger_line_above() {
+        assert_eq!(Note::new(60).bass_staff_position(), 12); // C4
+    }
+
+    // ── Note::clef ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn clef_splits_at_middle_c() {
+        assert_eq!(Note::new(60).clef(), Clef::Treble); // C4
+        assert_eq!(Note::new(59).clef(), Clef::Bass);   // B3
+        assert_eq!(Note::new(41).clef(), Clef::Bass);   // F2
+        assert_eq!(Note::new(84).clef(), Clef::Treble); // C6
     }
 
     #[test]

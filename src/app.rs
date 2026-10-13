@@ -3,7 +3,7 @@ use crate::{
     midi::MidiReceiver,
     scheduler::{BOX_WEIGHTS, FAST_THRESHOLD_MS},
     song::{MidiFileSong, RandomSong, Song},
-    staff::Note,
+    staff::{Clef, Note},
     state::AppState,
 };
 use egui::{Color32, FontData, FontDefinitions, FontFamily, FontId, Painter, Pos2, Rect, Shape, Stroke};
@@ -236,43 +236,62 @@ impl TrainerApp {
     #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::too_many_lines)]
     fn draw_staff(&self, painter: &Painter, rect: Rect) -> usize {
         let cx = rect.center().x;
-        let cy = rect.center().y;
-        let line_spacing = (rect.height() * 0.075).clamp(12.0, 28.0);
+        let overall_cy = rect.center().y;
+        let line_spacing = (rect.height() * 0.045).clamp(9.0, 20.0);
         let staff_width = rect.width() * 0.85;
         let x0 = cx - staff_width / 2.0;
         let x1 = cx + staff_width / 2.0;
 
-        let bottom_line_y = cy + 2.0 * line_spacing;
-        let top_line_y = cy - 2.0 * line_spacing;
+        // Gap between the two staves (treble bottom line to bass top line),
+        // wide enough for middle C's single ledger line on either staff.
+        let staff_gap = line_spacing * 3.0;
+        let half_span = 2.0 * line_spacing + staff_gap / 2.0;
+        let treble_cy = overall_cy - half_span;
+        let bass_cy = overall_cy + half_span;
+
+        let treble_bottom_y = treble_cy + 2.0 * line_spacing;
+        let treble_top_y = treble_cy - 2.0 * line_spacing;
+        let bass_bottom_y = bass_cy + 2.0 * line_spacing;
+        let bass_top_y = bass_cy - 2.0 * line_spacing;
+
+        // Full vertical extent of the grand staff system, used for bar lines.
+        let system_top_y = treble_top_y;
+        let system_bottom_y = bass_bottom_y;
 
         let staff_color = Color32::from_gray(220);
         let staff_stroke = Stroke::new(1.5_f32, staff_color);
-        for i in 0..5_i32 {
-            let y = cy + (2 - i) as f32 * line_spacing;
-            painter.line_segment([Pos2::new(x0, y), Pos2::new(x1, y)], staff_stroke);
+        for staff_cy in [treble_cy, bass_cy] {
+            for i in 0..5_i32 {
+                let y = staff_cy + (2 - i) as f32 * line_spacing;
+                painter.line_segment([Pos2::new(x0, y), Pos2::new(x1, y)], staff_stroke);
+            }
         }
 
-        draw_treble_clef(painter, x0, cy, line_spacing, staff_color);
+        draw_treble_clef(painter, x0, treble_cy, line_spacing, staff_color);
+        draw_bass_clef(painter, x0, bass_cy, line_spacing, staff_color);
 
-        // Time signature — drawn after the clef, before the first note.
+        // Time signature — drawn after the clef, before the first note, on both staves.
         let beats = self.song.beats_per_measure();
         let unit = self.song.beat_unit();
         let ts_x = x0 + line_spacing * 3.4;
         let ts_font = FontId::proportional(line_spacing * 1.9);
-        painter.text(Pos2::new(ts_x, cy - line_spacing * 0.85), egui::Align2::CENTER_CENTER, beats.to_string(), ts_font.clone(), staff_color);
-        painter.text(Pos2::new(ts_x, cy + line_spacing * 0.85), egui::Align2::CENTER_CENTER, unit.to_string(), ts_font, staff_color);
+        for staff_cy in [treble_cy, bass_cy] {
+            painter.text(Pos2::new(ts_x, staff_cy - line_spacing * 0.85), egui::Align2::CENTER_CENTER, beats.to_string(), ts_font.clone(), staff_color);
+            painter.text(Pos2::new(ts_x, staff_cy + line_spacing * 0.85), egui::Align2::CENTER_CENTER, unit.to_string(), ts_font.clone(), staff_color);
+        }
 
-        // Compute how many notes fit after the treble clef + time signature.
+        // Compute how many notes fit after the clef + time signature.
         let clef_width = line_spacing * 5.5;
         let note_spacing = line_spacing * 3.0;
         let notes_area = staff_width - clef_width;
         let page_size = ((notes_area / note_spacing).floor() as usize).max(1);
         let notes_start_x = x0 + clef_width + note_spacing * 0.5;
 
-        // Bar lines: left edge, after clef/time-sig, right edge.
+        // Bar lines: left edge, after clef/time-sig, right edge. These span
+        // the full grand-staff system, connecting both staves.
         for bar_x in [x0, x0 + clef_width, x1] {
             painter.line_segment(
-                [Pos2::new(bar_x, top_line_y), Pos2::new(bar_x, bottom_line_y)],
+                [Pos2::new(bar_x, system_top_y), Pos2::new(bar_x, system_bottom_y)],
                 staff_stroke,
             );
         }
@@ -290,7 +309,7 @@ impl TrainerApp {
                 if curr_measure > prev_measure {
                     let bar_x = notes_start_x + (i as f32 - 0.5) * note_spacing;
                     painter.line_segment(
-                        [Pos2::new(bar_x, top_line_y), Pos2::new(bar_x, bottom_line_y)],
+                        [Pos2::new(bar_x, system_top_y), Pos2::new(bar_x, system_bottom_y)],
                         staff_stroke,
                     );
                 }
@@ -304,8 +323,11 @@ impl TrainerApp {
 
         for (i, note) in self.page.iter().take(page_size).enumerate() {
             let note_x = notes_start_x + i as f32 * note_spacing;
-            let pos = note.staff_position();
-            let note_y = bottom_line_y - (pos - 2) as f32 * (line_spacing / 2.0);
+            let (staff_top_y, staff_bottom_y, pos) = match note.clef() {
+                Clef::Treble => (treble_top_y, treble_bottom_y, note.staff_position()),
+                Clef::Bass => (bass_top_y, bass_bottom_y, note.bass_staff_position()),
+            };
+            let note_y = staff_bottom_y - (pos - 2) as f32 * (line_spacing / 2.0);
 
             let note_color = match i.cmp(&self.page_cursor) {
                 Ordering::Less => Color32::from_gray(80),
@@ -317,8 +339,8 @@ impl TrainerApp {
                 Ordering::Greater => Color32::from_gray(155),
             };
 
-            // Ledger lines below staff
-            let mut ly = bottom_line_y + line_spacing;
+            // Ledger lines below the note's staff
+            let mut ly = staff_bottom_y + line_spacing;
             while ly <= note_y + 0.5 {
                 painter.line_segment(
                     [Pos2::new(note_x - ledger_hw, ly), Pos2::new(note_x + ledger_hw, ly)],
@@ -326,8 +348,8 @@ impl TrainerApp {
                 );
                 ly += line_spacing;
             }
-            // Ledger lines above staff
-            let mut ly = top_line_y - line_spacing;
+            // Ledger lines above the note's staff
+            let mut ly = staff_top_y - line_spacing;
             while ly >= note_y - 0.5 {
                 painter.line_segment(
                     [Pos2::new(note_x - ledger_hw, ly), Pos2::new(note_x + ledger_hw, ly)],
@@ -508,6 +530,18 @@ fn draw_treble_clef(painter: &Painter, x0: f32, cy: f32, s: f32, color: Color32)
         pos,
         egui::Align2::LEFT_CENTER,
         "\u{1D11E}",
+        FontId::new(font_size, FontFamily::Name("NotoMusic".into())),
+        color,
+    );
+}
+
+fn draw_bass_clef(painter: &Painter, x0: f32, cy: f32, s: f32, color: Color32) {
+    let font_size = s * 4.5;
+    let pos = Pos2::new(x0 + s * 0.15, cy - s * 0.17);
+    painter.text(
+        pos,
+        egui::Align2::LEFT_CENTER,
+        "\u{1D122}",
         FontId::new(font_size, FontFamily::Name("NotoMusic".into())),
         color,
     );

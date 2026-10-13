@@ -1,16 +1,17 @@
 # MIDI Staff Trainer
 
-A desktop app for learning to read sheet music with a MIDI keyboard. Notes are displayed on the treble clef; play the matching key to advance. Supports both a random note trainer with spaced repetition and playback of MIDI files.
+A desktop app for learning to read sheet music with a MIDI keyboard. Notes are displayed on a grand staff (treble and bass clefs); play the matching key to advance. Supports both a random note trainer with spaced repetition and playback of MIDI files.
 
 ## Features
 
 ### Staff display
-- Treble clef rendered using the Noto Music font glyph (authentic engraved style)
+- Grand staff with both treble and bass clefs, rendered using the Noto Music font glyphs (authentic engraved style)
+- Notes placed on whichever clef fits: middle C and above on the treble staff, below on the bass staff
 - Multi-note staff display with horizontal paging — see upcoming notes at a glance
 - Whole, half, quarter, eighth, and sixteenth note heads with stems and flags
-- Ledger lines above and below the staff as needed
-- Time signature display parsed from MIDI files (fallback 4/4)
-- Beat-accurate bar lines across mixed note values and page flips
+- Ledger lines above and below each staff as needed
+- Time signature display parsed from MIDI files (fallback 4/4), shown on both staves
+- Beat-accurate bar lines across mixed note values and page flips, spanning both staves
 - Played notes dim to grey; active note is gold; upcoming notes are medium grey
 
 ### Piano keyboard visualization
